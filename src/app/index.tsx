@@ -1,98 +1,201 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  TouchableOpacity,
+} from 'react-native';
+import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Palette, BorderRadius, Shadows } from '../constants/theme';
+import { useAuth } from '../context/AuthContext';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+export default function SplashScreen() {
+  const { user, isLoading: authLoading } = useAuth();
+  const [checkingState, setCheckingState] = useState(true);
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
+  useEffect(() => {
+    let isMounted = true;
+
+    const routeUser = async () => {
+      // Allow moment for smooth splash branding display
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+
+      if (!isMounted) return;
+
+      try {
+        if (user) {
+          // Logged in user: direct access to their assigned portal
+          if (user.role === 'admin') {
+            router.replace('/admin-portal');
+          } else {
+            router.replace('/(tabs)/home');
+          }
+          return;
+        }
+
+        // Unauthenticated: strict flow Splash -> Onboarding (1, 2, 3) -> Login
+        router.replace('/onboarding');
+      } catch (e) {
+        console.warn('Navigation error from splash', e);
+        router.replace('/onboarding');
+      } finally {
+        if (isMounted) setCheckingState(false);
+      }
+    };
+
+    if (!authLoading) {
+      routeUser();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user, authLoading]);
+
   return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+    <View style={styles.container}>
+      <View style={styles.content}>
+        {/* Animated Brand Emblem */}
+        <View style={styles.logoBadge}>
+          <Ionicons name="sparkles" size={48} color={Palette.white} />
+        </View>
 
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+        <Text style={styles.brandTitle}>Fixora</Text>
+        <Text style={styles.brandTagline}>HOME SERVICES MARKETPLACE</Text>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+        <View style={styles.separator} />
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+        <Text style={styles.description}>
+          Professional, Reliable & Verified Services{'\n'}Right at Your Doorstep
+        </Text>
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+        {checkingState ? (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="small" color={Palette.primary} />
+            <Text style={styles.loaderText}>Connecting to Fixora...</Text>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={styles.manualBtn}
+            onPress={() => router.replace('/onboarding')}
+          >
+            <Text style={styles.manualBtnText}>Continue to Onboarding</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Footer */}
+      <View style={styles.footer}>
+        <View style={styles.firebaseStatusRow}>
+          <View style={styles.statusDot} />
+          <Text style={styles.footerText}>Firebase Connected • Project Fixora</Text>
+        </View>
+        <Text style={styles.versionText}>Version 1.0.0 • Mobile & Web Ready</Text>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'space-between',
+    paddingVertical: 50,
+    paddingHorizontal: 24,
+    maxWidth: 520,
+    width: '100%',
+    alignSelf: 'center',
   },
-  safeArea: {
+  content: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
   },
-  heroSection: {
+  logoBadge: {
+    width: 96,
+    height: 96,
+    borderRadius: 28,
+    backgroundColor: Palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+    marginBottom: 20,
+    ...Shadows.lg,
   },
-  title: {
+  brandTitle: {
+    fontSize: 38,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -1,
+  },
+  brandTagline: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Palette.primary,
+    letterSpacing: 2,
+    marginTop: 4,
+  },
+  separator: {
+    width: 48,
+    height: 3,
+    backgroundColor: Palette.primary,
+    borderRadius: 2,
+    marginVertical: 18,
+  },
+  description: {
+    fontSize: 14,
+    color: '#64748B',
     textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 32,
   },
-  code: {
-    textTransform: 'uppercase',
+  loaderContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
   },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  loaderText: {
+    fontSize: 13,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  manualBtn: {
+    backgroundColor: Palette.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: BorderRadius.full,
+    marginTop: 10,
+  },
+  manualBtnText: {
+    color: Palette.white,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  footer: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  firebaseStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10B981',
+  },
+  footerText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  versionText: {
+    fontSize: 10,
+    color: '#94A3B8',
   },
 });
