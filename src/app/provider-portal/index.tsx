@@ -18,10 +18,9 @@ import { useMarketplace } from '../../context/MarketplaceContext';
 import { Booking, BookingStatus } from '../../types';
 import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
-import { PortalSwitcher } from '../../components/common/PortalSwitcher';
 
 export default function ProviderDashboardScreen() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { bookings, changeBookingStatus, setProviderAvailability, refreshAll } = useMarketplace();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -36,6 +35,20 @@ export default function ProviderDashboardScreen() {
   const handleToggleAvailability = async (value: boolean) => {
     setIsAvailable(value);
     await setProviderAvailability(value ? 'available' : 'busy');
+  };
+
+  const handleLogout = () => {
+    Alert.alert('Sign Out', 'Are you sure you want to log out of Provider Portal?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          await logout();
+          router.replace('/auth/login');
+        },
+      },
+    ]);
   };
 
   // Provider bookings (assigned to this provider or all for demo David Miller)
@@ -95,25 +108,31 @@ export default function ProviderDashboardScreen() {
       {/* Provider Header Bar */}
       <View style={styles.navBar}>
         <View style={styles.navLeft}>
-          <TouchableOpacity onPress={() => router.replace('/')} style={styles.homeBtn}>
-            <Ionicons name="home-outline" size={20} color={Palette.gray800} />
-          </TouchableOpacity>
+          <View style={styles.providerBadgeBox}>
+            <Ionicons name="construct" size={20} color={Palette.white} />
+          </View>
           <View>
             <Text style={styles.portalTitle}>Provider Portal</Text>
             <Text style={styles.providerName}>{user?.name || 'David Miller'}</Text>
           </View>
         </View>
 
-        <View style={styles.availabilityToggle}>
-          <Text style={[styles.availabilityText, { color: isAvailable ? Palette.accent : Palette.gray400 }]}>
-            {isAvailable ? 'Online' : 'Busy'}
-          </Text>
-          <Switch
-            value={isAvailable}
-            onValueChange={handleToggleAvailability}
-            trackColor={{ false: Palette.gray300, true: Palette.accentSoft }}
-            thumbColor={isAvailable ? Palette.accent : Palette.gray400}
-          />
+        <View style={styles.navRight}>
+          <View style={styles.availabilityToggle}>
+            <Text style={[styles.availabilityText, { color: isAvailable ? Palette.accent : Palette.gray400 }]}>
+              {isAvailable ? 'Online' : 'Busy'}
+            </Text>
+            <Switch
+              value={isAvailable}
+              onValueChange={handleToggleAvailability}
+              trackColor={{ false: Palette.gray300, true: Palette.accentSoft }}
+              thumbColor={isAvailable ? Palette.accent : Palette.gray400}
+            />
+          </View>
+
+          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
+            <Ionicons name="log-out-outline" size={18} color={Palette.danger} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -123,9 +142,6 @@ export default function ProviderDashboardScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Portal Switcher */}
-        <PortalSwitcher />
-
         {/* Quick Navigation Cards */}
         <View style={styles.navRow}>
           <TouchableOpacity
@@ -319,10 +335,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  homeBtn: {
-    padding: 6,
-    backgroundColor: Palette.gray100,
-    borderRadius: BorderRadius.sm,
+  providerBadgeBox: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Palette.purple,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   portalTitle: {
     fontSize: 16,
@@ -333,6 +352,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Palette.gray600,
   },
+  navRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   availabilityToggle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -341,6 +365,11 @@ const styles = StyleSheet.create({
   availabilityText: {
     fontSize: 12,
     fontWeight: '700',
+  },
+  logoutBtn: {
+    padding: 6,
+    backgroundColor: '#FEE2E2',
+    borderRadius: BorderRadius.sm,
   },
   navRow: {
     flexDirection: 'row',

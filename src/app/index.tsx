@@ -29,6 +29,8 @@ export default function SplashScreen() {
           // Logged in user: direct access to their assigned portal
           if (user.role === 'admin') {
             router.replace('/admin-portal');
+          } else if (user.role === 'provider') {
+            router.replace('/provider-portal');
           } else {
             router.replace('/(tabs)/home');
           }

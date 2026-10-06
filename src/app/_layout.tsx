@@ -27,13 +27,31 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // 2. Customer trying to access admin portal: block & redirect to customer home
-    if (user && user.role === 'customer' && firstSegment === 'admin-portal') {
+    // 2. Authenticated users attempting to visit auth screens: redirect to their assigned portal
+    if (user && firstSegment === 'auth') {
+      if (user.role === 'admin') {
+        router.replace('/admin-portal');
+      } else if (user.role === 'provider') {
+        router.replace('/provider-portal');
+      } else {
+        router.replace('/(tabs)/home');
+      }
+      return;
+    }
+
+    // 3. Customer trying to access admin portal or provider portal: redirect to customer home
+    if (user && user.role === 'customer' && (firstSegment === 'admin-portal' || firstSegment === 'provider-portal')) {
       router.replace('/(tabs)/home');
       return;
     }
 
-    // 3. Admin trying to access provider portal: redirect to admin portal
+    // 4. Provider trying to access admin portal: redirect to provider portal
+    if (user && user.role === 'provider' && firstSegment === 'admin-portal') {
+      router.replace('/provider-portal');
+      return;
+    }
+
+    // 5. Admin trying to access provider portal: redirect to admin portal
     if (user && user.role === 'admin' && firstSegment === 'provider-portal') {
       router.replace('/admin-portal');
       return;

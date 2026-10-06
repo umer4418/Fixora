@@ -16,14 +16,14 @@ interface AuthContextType {
   user: User | null;
   activeRole: UserRole;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; role?: UserRole; error?: string }>;
   register: (
     name: string,
     email: string,
     password: string,
     role: UserRole,
     phone?: string
-  ) => Promise<{ success: boolean; error?: string }>;
+  ) => Promise<{ success: boolean; role?: UserRole; error?: string }>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   switchPortalRole: (role: UserRole) => void;
@@ -138,7 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (
     email: string,
     pass: string
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<{ success: boolean; role?: UserRole; error?: string }> => {
     setIsLoading(true);
     try {
       const emailClean = email.trim();
@@ -202,7 +202,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setActiveRole(role);
           await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(loggedInUser));
           await AsyncStorage.setItem(ACTIVE_ROLE_KEY, role);
-          return { success: true };
+          return { success: true, role };
         } catch (fbErr: any) {
           console.warn('Firebase signIn notice:', fbErr);
           // If Firebase rejected the credentials (wrong password, user not found, etc.)
@@ -249,7 +249,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveRole(matchedUser.role);
       await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(matchedUser));
       await AsyncStorage.setItem(ACTIVE_ROLE_KEY, matchedUser.role);
-      return { success: true };
+      return { success: true, role: matchedUser.role };
     } catch (e: any) {
       return { success: false, error: e?.message || 'Login failed' };
     } finally {
@@ -263,7 +263,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pass: string,
     role: UserRole,
     phone?: string
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<{ success: boolean; role?: UserRole; error?: string }> => {
     setIsLoading(true);
     try {
       const emailClean = email.trim();
@@ -308,7 +308,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setActiveRole(role);
           await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(newUser));
           await AsyncStorage.setItem(ACTIVE_ROLE_KEY, role);
-          return { success: true };
+          return { success: true, role };
         } catch (fbErr: any) {
           console.warn('Firebase createUser notice:', fbErr);
           if (fbErr?.code === 'auth/email-already-in-use') {
@@ -354,7 +354,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveRole(role);
       await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(localUser));
       await AsyncStorage.setItem(ACTIVE_ROLE_KEY, role);
-      return { success: true };
+      return { success: true, role };
     } catch (e: any) {
       return { success: false, error: e?.message || 'Registration failed' };
     } finally {

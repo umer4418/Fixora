@@ -297,14 +297,6 @@ export default function AdminDashboardScreen() {
           </View>
 
           <View style={styles.topNavRight}>
-            <TouchableOpacity
-              style={styles.customerViewBtn}
-              onPress={() => router.replace('/(tabs)/home')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="eye-outline" size={15} color={Palette.primary} />
-              <Text style={styles.customerViewBtnText}>Customer View</Text>
-            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.refreshBtn}

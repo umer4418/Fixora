@@ -19,7 +19,7 @@ import { Button } from '../../components/common/Button';
 import { useResponsive } from '../../utils/responsive';
 
 export default function LoginScreen() {
-  const { login, loginAsDemoUser, resetPassword } = useAuth();
+  const { login, resetPassword } = useAuth();
   const { moderateScale } = useResponsive();
 
   const [email, setEmail] = useState('');
@@ -44,28 +44,24 @@ export default function LoginScreen() {
     setLoading(false);
 
     if (res.success) {
-      // Check target route based on email/role
-      const emailLower = email.toLowerCase();
-      if (emailLower.includes('admin') || emailLower === 'majeedumer50@gmail.com') {
+      const emailLower = email.trim().toLowerCase();
+      const role =
+        res.role ||
+        (emailLower.includes('admin') || emailLower === 'majeedumer50@gmail.com'
+          ? 'admin'
+          : emailLower.includes('provider') || emailLower.includes('david')
+          ? 'provider'
+          : 'customer');
+
+      if (role === 'admin') {
         router.replace('/admin-portal');
-      } else if (emailLower.includes('provider') || emailLower.includes('david')) {
+      } else if (role === 'provider') {
         router.replace('/provider-portal');
       } else {
         router.replace('/(tabs)/home');
       }
     } else {
       Alert.alert('Login Failed', res.error || 'Please check your credentials.');
-    }
-  };
-
-  const handleQuickLogin = (role: 'customer' | 'provider' | 'admin') => {
-    loginAsDemoUser(role);
-    if (role === 'admin') {
-      router.replace('/admin-portal');
-    } else if (role === 'provider') {
-      router.replace('/provider-portal');
-    } else {
-      router.replace('/(tabs)/home');
     }
   };
 
@@ -114,63 +110,10 @@ export default function LoginScreen() {
           <Text style={styles.brandSubtitle}>Home Services Marketplace</Text>
         </View>
 
-        {/* Account Access Guide Card */}
-        <View style={styles.guideCard}>
-          <View style={styles.guideHeader}>
-            <Ionicons name="shield-checkmark" size={18} color={Palette.primary} />
-            <Text style={styles.guideTitle}>How to Access Fixora</Text>
-          </View>
-          <Text style={styles.guideDesc}>
-            Only verified and authenticated users have access to the app. You can create a new account or tap any test account below to autofill:
-          </Text>
-
-          <View style={styles.credentialCardsRow}>
-            {/* Customer Credentials */}
-            <TouchableOpacity
-              style={styles.credCard}
-              onPress={() => {
-                setEmail('alex.morgan@example.com');
-                setPassword('password');
-              }}
-              activeOpacity={0.8}
-            >
-              <View style={styles.credRoleRow}>
-                <Ionicons name="person" size={13} color={Palette.primary} />
-                <Text style={styles.credRoleTitle}>Customer Account</Text>
-              </View>
-              <Text style={styles.credEmailText}>alex.morgan@example.com</Text>
-              <Text style={styles.credPassText}>Password: password</Text>
-              <View style={styles.autofillPill}>
-                <Text style={styles.autofillPillText}>Tap to Autofill</Text>
-              </View>
-            </TouchableOpacity>
-
-            {/* Admin Credentials */}
-            <TouchableOpacity
-              style={[styles.credCard, styles.credCardAdmin]}
-              onPress={() => {
-                setEmail('majeedumer50@gmail.com');
-                setPassword('password');
-              }}
-              activeOpacity={0.8}
-            >
-              <View style={styles.credRoleRow}>
-                <Ionicons name="shield-checkmark" size={13} color={Palette.danger} />
-                <Text style={[styles.credRoleTitle, { color: Palette.danger }]}>Admin Account</Text>
-              </View>
-              <Text style={styles.credEmailText}>majeedumer50@gmail.com</Text>
-              <Text style={styles.credPassText}>Password: password</Text>
-              <View style={[styles.autofillPill, { backgroundColor: '#FEE2E2' }]}>
-                <Text style={[styles.autofillPillText, { color: Palette.danger }]}>Tap to Autofill</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* Form Card */}
         <View style={styles.formCard}>
           <Text style={styles.formTitle}>Sign In</Text>
-          <Text style={styles.formSubtitle}>Enter your credentials to access your dashboard</Text>
+          <Text style={styles.formSubtitle}>Enter your credentials to access your account</Text>
 
           {/* Email Input */}
           <Text style={styles.label}>Email Address</Text>
@@ -231,60 +174,6 @@ export default function LoginScreen() {
             size="lg"
             style={{ marginTop: Spacing.four }}
           />
-
-          {/* Quick Demo Logins Section */}
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>QUICK ONE-CLICK SIGN IN</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <View style={styles.demoButtonsCol}>
-            <TouchableOpacity
-              style={styles.demoCustomerBtn}
-              onPress={() => handleQuickLogin('customer')}
-              activeOpacity={0.8}
-            >
-              <View style={styles.demoBtnIcon}>
-                <Ionicons name="person" size={16} color={Palette.primary} />
-              </View>
-              <View style={styles.demoBtnTextCol}>
-                <Text style={styles.demoBtnTitle}>Customer Portal</Text>
-                <Text style={styles.demoBtnSubtitle}>Alex Morgan • Book services & browse</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={Palette.primary} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.demoAdminBtn}
-              onPress={() => handleQuickLogin('admin')}
-              activeOpacity={0.8}
-            >
-              <View style={[styles.demoBtnIcon, { backgroundColor: '#FEE2E2' }]}>
-                <Ionicons name="shield-checkmark" size={16} color={Palette.danger} />
-              </View>
-              <View style={styles.demoBtnTextCol}>
-                <Text style={[styles.demoBtnTitle, { color: Palette.danger }]}>Admin Portal (Web Dashboard)</Text>
-                <Text style={styles.demoBtnSubtitle}>Umer Majeed • Control services, coupons & orders</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={Palette.danger} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.demoProviderBtn}
-              onPress={() => handleQuickLogin('provider')}
-              activeOpacity={0.8}
-            >
-              <View style={[styles.demoBtnIcon, { backgroundColor: '#F3E8FF' }]}>
-                <Ionicons name="construct" size={16} color={Palette.purple} />
-              </View>
-              <View style={styles.demoBtnTextCol}>
-                <Text style={[styles.demoBtnTitle, { color: Palette.purple }]}>Provider Portal</Text>
-                <Text style={styles.demoBtnSubtitle}>David Miller • Manage jobs & earnings</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={Palette.purple} />
-            </TouchableOpacity>
-          </View>
         </View>
 
         {/* Footer Link: Go to Register */}
@@ -432,81 +321,6 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
   },
-  guideCard: {
-    backgroundColor: Palette.white,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.three,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: Spacing.three,
-    ...Shadows.sm,
-  },
-  guideHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-  },
-  guideTitle: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: Palette.gray900,
-  },
-  guideDesc: {
-    fontSize: 11.5,
-    color: Palette.gray500,
-    lineHeight: 16,
-    marginBottom: 10,
-  },
-  credentialCardsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  credCard: {
-    flex: 1,
-    backgroundColor: '#EFF6FF',
-    borderRadius: BorderRadius.lg,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  credCardAdmin: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-  },
-  credRoleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 4,
-  },
-  credRoleTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: Palette.primary,
-  },
-  credEmailText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    color: Palette.gray800,
-  },
-  credPassText: {
-    fontSize: 10,
-    color: Palette.gray500,
-    marginTop: 1,
-    marginBottom: 6,
-  },
-  autofillPill: {
-    backgroundColor: '#DBEAFE',
-    paddingVertical: 3,
-    borderRadius: BorderRadius.full,
-    alignItems: 'center',
-  },
-  autofillPillText: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: Palette.primary,
-  },
   brandBox: {
     alignItems: 'center',
     marginVertical: Spacing.three,
@@ -589,77 +403,6 @@ const styles = StyleSheet.create({
   },
   eyeIconBtn: {
     padding: 6,
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: Spacing.four,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#E2E8F0',
-  },
-  dividerText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: Palette.gray400,
-    marginHorizontal: 8,
-    letterSpacing: 0.5,
-  },
-  demoButtonsCol: {
-    gap: 10,
-  },
-  demoCustomerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
-  },
-  demoAdminBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-    backgroundColor: '#FEF2F2',
-  },
-  demoProviderBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1.5,
-    borderColor: '#E9D5FF',
-    backgroundColor: '#FAF5FF',
-  },
-  demoBtnIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#DBEAFE',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  demoBtnTextCol: {
-    flex: 1,
-  },
-  demoBtnTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: Palette.primary,
-  },
-  demoBtnSubtitle: {
-    fontSize: 11,
-    color: Palette.gray600,
-    marginTop: 1,
   },
   footerRow: {
     flexDirection: 'row',
