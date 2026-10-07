@@ -19,10 +19,17 @@ export default function NotificationsScreen() {
   const handleNotificationPress = async (notif: AppNotification) => {
     await markNotificationRead(notif.id);
     if (notif.bookingId) {
-      router.push({
-        pathname: '/booking/[id]',
-        params: { id: notif.bookingId },
-      });
+      if (notif.type === 'chat') {
+        router.push({
+          pathname: '/chat/[id]',
+          params: { id: notif.bookingId },
+        });
+      } else {
+        router.push({
+          pathname: '/booking/[id]',
+          params: { id: notif.bookingId },
+        });
+      }
     }
   };
 
@@ -47,7 +54,7 @@ export default function NotificationsScreen() {
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <Text style={styles.navTitle}>Notifications</Text>
-        <TouchableOpacity onPress={markAllAllRead} style={styles.markAllBtn}>
+        <TouchableOpacity onPress={markAllNotificationsRead} style={styles.markAllBtn}>
           <Text style={styles.markAllText}>Mark Read</Text>
         </TouchableOpacity>
       </View>
@@ -101,10 +108,6 @@ export default function NotificationsScreen() {
       />
     </SafeAreaView>
   );
-
-  async function markAllAllRead() {
-    await markAllNotificationsRead();
-  }
 }
 
 const styles = StyleSheet.create({

@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   ScrollView,
   TextInput,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Palette, BorderRadius, Spacing } from '../../constants/theme';
 import { useMarketplace } from '../../context/MarketplaceContext';
+import { useAuth } from '../../context/AuthContext';
 import { Address } from '../../types';
 import { Button } from '../common/Button';
 
@@ -24,8 +26,10 @@ export const AddressSelectorModal: React.FC<AddressSelectorModalProps> = ({
   onClose,
 }) => {
   const { addresses, selectedAddress, setSelectedAddress, addAddress } = useMarketplace();
+  const { user } = useAuth();
 
   const [isAddingNew, setIsAddingNew] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [label, setLabel] = useState<'Home' | 'Work' | 'Other'>('Home');
   const [street, setStreet] = useState('');
   const [apartment, setApartment] = useState('');
@@ -40,27 +44,55 @@ export const AddressSelectorModal: React.FC<AddressSelectorModalProps> = ({
 
   const handleSaveNewAddress = async () => {
     if (!street.trim() || !city.trim()) {
-      alert('Please fill in at least Street address and City');
+      Alert.alert('Required Fields', 'Please enter at least Street address and City.');
       return;
     }
 
-    const created = await addAddress({
-      label,
-      street: street.trim(),
-      apartment: apartment.trim(),
-      city: city.trim(),
-      state: state.trim() || 'IL',
-      zipCode: zipCode.trim(),
-      isDefault: addresses.length === 0,
-    });
+    setSaving(true);
+    try {
+      const created = await addAddress({
+        label,
+        street: street.trim(),
+        apartment: apartment.trim(),
+        city: city.trim(),
+        state: state.trim() || 'IL',
+        zipCode: zipCode.trim(),
+        isDefault: true,
+      });
 
-    setSelectedAddress(created);
-    setIsAddingNew(false);
-    setStreet('');
-    setApartment('');
-    setCity('');
-    setZipCode('');
-    onClose();
+      setSelectedAddress(created);
+      setIsAddingNew(false);
+      setStreet('');
+      setApartment('');
+      setCity('');
+      setState('');
+      setZipCode('');
+      onClose();
+    } catch (err: any) {
+      console.warn('handleSaveNewAddress fallback:', err);
+      // Emergency local address so the user is NEVER blocked
+      const fallbackAddr: Address = {
+        id: `addr-${Date.now()}`,
+        userId: user?.id || 'guest',
+        label,
+        street: street.trim(),
+        apartment: apartment.trim(),
+        city: city.trim(),
+        state: state.trim() || 'IL',
+        zipCode: zipCode.trim(),
+        isDefault: true,
+      };
+      setSelectedAddress(fallbackAddr);
+      setIsAddingNew(false);
+      setStreet('');
+      setApartment('');
+      setCity('');
+      setState('');
+      setZipCode('');
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -237,6 +269,7 @@ export const AddressSelectorModal: React.FC<AddressSelectorModalProps> = ({
                 <Button
                   title="Save Address"
                   onPress={handleSaveNewAddress}
+                  loading={saving}
                   style={{ flex: 2 }}
                 />
               </View>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,14 +10,15 @@ import {
   Alert,
   Modal,
   RefreshControl,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Palette, BorderRadius, Shadows } from '../../constants/theme';
 import { useMarketplace } from '../../context/MarketplaceContext';
 import { useAuth } from '../../context/AuthContext';
-import { BookingStatus, Service, Coupon } from '../../types';
+import { Booking, BookingStatus, Service, Coupon } from '../../types';
 
 type AdminTab = 'overview' | 'products' | 'orders' | 'coupons' | 'users' | 'reviews';
 
@@ -27,10 +28,17 @@ const SERVICE_IMAGE_PRESETS = [
   { label: 'Plumbing', url: 'https://images.unsplash.com/photo-1607472586893-edb57bdc0e39?w=600&auto=format&fit=crop&q=80' },
   { label: 'Electrical', url: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=600&auto=format&fit=crop&q=80' },
   { label: 'Painting', url: 'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?w=600&auto=format&fit=crop&q=80' },
-  { label: 'Handyman', url: 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?w=600&auto=format&fit=crop&q=80' },
+  { label: 'Carpentry', url: 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?w=600&auto=format&fit=crop&q=80' },
+  { label: 'Pest Control', url: 'https://images.unsplash.com/photo-1587293852726-70cdb56c2866?w=600&auto=format&fit=crop&q=80' },
+  { label: 'Smart Home', url: 'https://images.unsplash.com/photo-1558002038-1055907df827?w=600&auto=format&fit=crop&q=80' },
+  { label: 'Appliances', url: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=600&auto=format&fit=crop&q=80' },
+  { label: 'Water Heater', url: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=600&auto=format&fit=crop&q=80' },
 ];
 
 export default function AdminDashboardScreen() {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
+
   const {
     categories,
     services,
@@ -51,6 +59,7 @@ export default function AdminDashboardScreen() {
   const { user, logout } = useAuth();
 
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // Products Tab State
@@ -63,12 +72,14 @@ export default function AdminDashboardScreen() {
   const [newOriginalPrice, setNewOriginalPrice] = useState('');
   const [newDuration, setNewDuration] = useState('1-2 hours');
   const [newCategoryId, setNewCategoryId] = useState('');
+  const [newProviderId, setNewProviderId] = useState('');
   const [newImageUrl, setNewImageUrl] = useState(SERVICE_IMAGE_PRESETS[0].url);
   const [isSubmittingService, setIsSubmittingService] = useState(false);
 
   // Orders Tab State
   const [orderSearch, setOrderSearch] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
+  const [selectedOrderForModal, setSelectedOrderForModal] = useState<Booking | null>(null);
 
   // Coupons Tab State
   const [addCouponModalVisible, setAddCouponModalVisible] = useState(false);
@@ -79,9 +90,16 @@ export default function AdminDashboardScreen() {
   const [newCouponExpiry, setNewCouponExpiry] = useState('2026-12-31');
   const [isSubmittingCoupon, setIsSubmittingCoupon] = useState(false);
 
+  // Auto-refresh when admin opens or switches to the dashboard
+  useFocusEffect(
+    useCallback(() => {
+      refreshAll();
+    }, [refreshAll])
+  );
+
   const onRefresh = async () => {
     setRefreshing(true);
-    await refreshAll();
+    await refreshAll(true);
     setRefreshing(false);
   };
 
@@ -147,7 +165,7 @@ export default function AdminDashboardScreen() {
     }
 
     const cat = categories.find((c) => c.id === newCategoryId) || categories[0];
-    const prov = providers[0];
+    const prov = providers.find((p) => p.id === newProviderId) || providers[0];
 
     setIsSubmittingService(true);
     try {
@@ -172,6 +190,8 @@ export default function AdminDashboardScreen() {
       setNewDescription('');
       setNewPrice('');
       setNewOriginalPrice('');
+      setNewCategoryId('');
+      setNewProviderId('');
       Alert.alert('Product Added', `Service "${newTitle}" has been added to the Fixora marketplace!`);
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Failed to create service.');
@@ -273,160 +293,359 @@ export default function AdminDashboardScreen() {
     }
   };
 
+  const handleLogout = async () => {
+    await logout();
+    router.replace('/auth/login');
+  };
+
+  const renderSidebarContent = (isDrawer = false) => (
+    <View style={[styles.sidebarContainer, isDrawer && styles.drawerSidebarContainer]}>
+      {/* Brand Header */}
+      <View style={styles.sidebarHeader}>
+        <View style={styles.sidebarBrandRow}>
+          <View style={styles.sidebarLogoBox}>
+            <Ionicons name="shield-checkmark" size={20} color={Palette.white} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sidebarBrandTitle}>Fixora Admin</Text>
+            <Text style={styles.sidebarBrandSub}>Enterprise Portal</Text>
+          </View>
+          {isDrawer && (
+            <TouchableOpacity
+              style={styles.drawerCloseBtn}
+              onPress={() => setMobileDrawerOpen(false)}
+            >
+              <Ionicons name="close" size={22} color="#94A3B8" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <View style={styles.sidebarLiveBadge}>
+          <View style={styles.greenPulseDot} />
+          <Text style={styles.sidebarLiveText}>Firestore Live Synced</Text>
+        </View>
+      </View>
+
+      {/* Navigation Menu */}
+      <ScrollView
+        style={styles.sidebarNavScroll}
+        contentContainerStyle={styles.sidebarNavContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.sidebarSectionLabel}>MAIN MENU</Text>
+
+        <TouchableOpacity
+          style={[styles.sidebarNavItem, activeTab === 'overview' && styles.sidebarNavItemActive]}
+          onPress={() => {
+            setActiveTab('overview');
+            if (isDrawer) setMobileDrawerOpen(false);
+          }}
+          activeOpacity={0.75}
+        >
+          <Ionicons
+            name={activeTab === 'overview' ? 'grid' : 'grid-outline'}
+            size={18}
+            color={activeTab === 'overview' ? Palette.white : '#94A3B8'}
+          />
+          <Text style={[styles.sidebarNavText, activeTab === 'overview' && styles.sidebarNavTextActive]}>
+            Dashboard
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.sidebarNavItem, activeTab === 'products' && styles.sidebarNavItemActive]}
+          onPress={() => {
+            setActiveTab('products');
+            if (isDrawer) setMobileDrawerOpen(false);
+          }}
+          activeOpacity={0.75}
+        >
+          <Ionicons
+            name={activeTab === 'products' ? 'construct' : 'construct-outline'}
+            size={18}
+            color={activeTab === 'products' ? Palette.white : '#94A3B8'}
+          />
+          <Text style={[styles.sidebarNavText, activeTab === 'products' && styles.sidebarNavTextActive]}>
+            Products & Services
+          </Text>
+          <View style={styles.sidebarCountBadge}>
+            <Text style={styles.sidebarCountBadgeText}>{services.length}</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.sidebarNavItem, activeTab === 'orders' && styles.sidebarNavItemActive]}
+          onPress={() => {
+            setActiveTab('orders');
+            if (isDrawer) setMobileDrawerOpen(false);
+          }}
+          activeOpacity={0.75}
+        >
+          <Ionicons
+            name={activeTab === 'orders' ? 'clipboard' : 'clipboard-outline'}
+            size={18}
+            color={activeTab === 'orders' ? Palette.white : '#94A3B8'}
+          />
+          <Text style={[styles.sidebarNavText, activeTab === 'orders' && styles.sidebarNavTextActive]}>
+            Orders & Bookings
+          </Text>
+          {activeOrdersCount > 0 ? (
+            <View style={[styles.sidebarCountBadge, { backgroundColor: Palette.danger }]}>
+              <Text style={styles.sidebarCountBadgeText}>{activeOrdersCount}</Text>
+            </View>
+          ) : (
+            <View style={styles.sidebarCountBadge}>
+              <Text style={styles.sidebarCountBadgeText}>{bookings.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.sidebarNavItem, activeTab === 'coupons' && styles.sidebarNavItemActive]}
+          onPress={() => {
+            setActiveTab('coupons');
+            if (isDrawer) setMobileDrawerOpen(false);
+          }}
+          activeOpacity={0.75}
+        >
+          <Ionicons
+            name={activeTab === 'coupons' ? 'pricetag' : 'pricetag-outline'}
+            size={18}
+            color={activeTab === 'coupons' ? Palette.white : '#94A3B8'}
+          />
+          <Text style={[styles.sidebarNavText, activeTab === 'coupons' && styles.sidebarNavTextActive]}>
+            Discount Coupons
+          </Text>
+          <View style={styles.sidebarCountBadge}>
+            <Text style={styles.sidebarCountBadgeText}>{coupons.length}</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.sidebarNavItem, activeTab === 'users' && styles.sidebarNavItemActive]}
+          onPress={() => {
+            setActiveTab('users');
+            if (isDrawer) setMobileDrawerOpen(false);
+          }}
+          activeOpacity={0.75}
+        >
+          <Ionicons
+            name={activeTab === 'users' ? 'people' : 'people-outline'}
+            size={18}
+            color={activeTab === 'users' ? Palette.white : '#94A3B8'}
+          />
+          <Text style={[styles.sidebarNavText, activeTab === 'users' && styles.sidebarNavTextActive]}>
+            Users & Providers
+          </Text>
+          <View style={styles.sidebarCountBadge}>
+            <Text style={styles.sidebarCountBadgeText}>{providers.length}</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.sidebarNavItem, activeTab === 'reviews' && styles.sidebarNavItemActive]}
+          onPress={() => {
+            setActiveTab('reviews');
+            if (isDrawer) setMobileDrawerOpen(false);
+          }}
+          activeOpacity={0.75}
+        >
+          <Ionicons
+            name={activeTab === 'reviews' ? 'star' : 'star-outline'}
+            size={18}
+            color={activeTab === 'reviews' ? Palette.white : '#94A3B8'}
+          />
+          <Text style={[styles.sidebarNavText, activeTab === 'reviews' && styles.sidebarNavTextActive]}>
+            Customer Reviews
+          </Text>
+          <View style={styles.sidebarCountBadge}>
+            <Text style={styles.sidebarCountBadgeText}>{reviews.length}</Text>
+          </View>
+        </TouchableOpacity>
+      </ScrollView>
+
+      {/* Pinned Bottom Administrator Profile & Sign Out Button */}
+      <View style={styles.sidebarFooter}>
+        <View style={styles.adminProfileCard}>
+          <View style={styles.adminAvatarBox}>
+            <Ionicons name="shield-checkmark" size={16} color={Palette.white} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.adminProfileName} numberOfLines={1}>
+              {user?.name || 'Administrator'}
+            </Text>
+            <Text style={styles.adminProfileEmail} numberOfLines={1}>
+              {user?.email || 'majeedumer50@gmail.com'}
+            </Text>
+          </View>
+          <View style={styles.adminTag}>
+            <Text style={styles.adminTagText}>Admin</Text>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          style={styles.sidebarLogoutBtn}
+          onPress={async () => {
+            if (isDrawer) setMobileDrawerOpen(false);
+            await handleLogout();
+          }}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="log-out-outline" size={18} color={Palette.white} />
+          <Text style={styles.sidebarLogoutText}>Sign Out</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-      {/* Web & Mobile Style Header */}
-      <View style={styles.topNavbar}>
-        <View style={styles.topNavbarInner}>
-          <View style={styles.topNavLeft}>
-            <View style={styles.adminLogoBox}>
-              <Ionicons name="shield-checkmark" size={20} color={Palette.white} />
+      {/* On Mobile: Header Bar with Hamburger Button */}
+      {!isDesktop && (
+        <View style={styles.mobileTopBar}>
+          <TouchableOpacity
+            style={styles.mobileHamburgerBtn}
+            onPress={() => setMobileDrawerOpen(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="menu" size={24} color="#F8FAFC" />
+          </TouchableOpacity>
+
+          <View style={styles.mobileHeaderCenter}>
+            <View style={styles.mobileLogoBox}>
+              <Ionicons name="shield-checkmark" size={16} color={Palette.white} />
             </View>
-            <View>
-              <View style={styles.portalTitleRow}>
-                <Text style={styles.topNavTitle}>Fixora Admin Portal</Text>
-                <View style={styles.cloudBadge}>
-                  <View style={styles.greenPulse} />
-                  <Text style={styles.cloudBadgeText}>Firestore Live</Text>
-                </View>
+            <Text style={styles.mobileHeaderTitle}>Fixora Admin</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.mobileRefreshBtn}
+            onPress={onRefresh}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="refresh" size={18} color="#94A3B8" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Admin Portal Layout: Row on Desktop, Column on Mobile */}
+      <View style={styles.adminLayoutRow}>
+        {/* Desktop Left Sidebar: Pinned on Left */}
+        {isDesktop && (
+          <View style={styles.desktopSidebarWrapper}>
+            {renderSidebarContent(false)}
+          </View>
+        )}
+
+        {/* Mobile Left Sidebar Drawer */}
+        {!isDesktop && mobileDrawerOpen && (
+          <Modal
+            visible={mobileDrawerOpen}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setMobileDrawerOpen(false)}
+          >
+            <View style={styles.drawerBackdrop}>
+              <TouchableOpacity
+                style={styles.drawerDismissOverlay}
+                activeOpacity={1}
+                onPress={() => setMobileDrawerOpen(false)}
+              />
+              <View style={styles.drawerSidebarWrapper}>
+                {renderSidebarContent(true)}
               </View>
-              <Text style={styles.topNavSub}>
-                {user?.name ? `${user.name} • ` : ''}{user?.email || 'majeedumer50@gmail.com'}
+            </View>
+          </Modal>
+        )}
+
+        {/* Main Content Column */}
+        <View style={styles.mainContentColumn}>
+          {/* Content Header Bar */}
+          <View style={styles.contentHeaderBar}>
+            <View style={styles.contentHeaderLeft}>
+              <Text style={styles.contentHeaderTitle}>
+                {activeTab === 'overview' && 'Executive Dashboard'}
+                {activeTab === 'products' && `Marketplace Services & Products (${services.length})`}
+                {activeTab === 'orders' && `Order Management & Tracking (${bookings.length})`}
+                {activeTab === 'coupons' && `Promo & Discount Coupons (${coupons.length})`}
+                {activeTab === 'users' && `Service Providers & Users (${providers.length})`}
+                {activeTab === 'reviews' && `Customer Reviews & Ratings (${reviews.length})`}
+              </Text>
+              <Text style={styles.contentHeaderSub}>
+                {activeTab === 'overview' && 'Live platform metrics and real-time revenue overview'}
+                {activeTab === 'products' && 'View, search, filter and create services offered on Fixora'}
+                {activeTab === 'orders' && 'Real-time order statuses synced directly with Firestore'}
+                {activeTab === 'coupons' && 'Active customer promo codes & checkout discounts'}
+                {activeTab === 'users' && 'Verified provider profiles and platform technicians'}
+                {activeTab === 'reviews' && 'Customer feedback and service satisfaction ratings'}
               </Text>
             </View>
-          </View>
 
-          <View style={styles.topNavRight}>
-
-            <TouchableOpacity
-              style={styles.refreshBtn}
-              onPress={onRefresh}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="refresh" size={16} color={Palette.gray700} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.refreshBtn}
-              onPress={async () => {
-                await logout();
-                router.replace('/auth/login');
-              }}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="log-out-outline" size={16} color={Palette.danger} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
-      {/* Web Portal Navigation Tabs */}
-      <View style={styles.tabsBarWrapper}>
-        <View style={styles.tabsBarInner}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.tabsScrollContent}
-          >
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'overview' && styles.tabItemActive]}
-            onPress={() => setActiveTab('overview')}
-          >
-            <Ionicons
-              name={activeTab === 'overview' ? 'grid' : 'grid-outline'}
-              size={16}
-              color={activeTab === 'overview' ? Palette.primary : Palette.gray600}
-            />
-            <Text style={[styles.tabItemText, activeTab === 'overview' && styles.tabItemTextActive]}>
-              Dashboard
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'products' && styles.tabItemActive]}
-            onPress={() => setActiveTab('products')}
-          >
-            <Ionicons
-              name={activeTab === 'products' ? 'construct' : 'construct-outline'}
-              size={16}
-              color={activeTab === 'products' ? Palette.primary : Palette.gray600}
-            />
-            <Text style={[styles.tabItemText, activeTab === 'products' && styles.tabItemTextActive]}>
-              Products & Services ({services.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'orders' && styles.tabItemActive]}
-            onPress={() => setActiveTab('orders')}
-          >
-            <Ionicons
-              name={activeTab === 'orders' ? 'clipboard' : 'clipboard-outline'}
-              size={16}
-              color={activeTab === 'orders' ? Palette.primary : Palette.gray600}
-            />
-            <Text style={[styles.tabItemText, activeTab === 'orders' && styles.tabItemTextActive]}>
-              Order Tracking ({bookings.length})
-            </Text>
-            {activeOrdersCount > 0 && (
-              <View style={styles.tabBadge}>
-                <Text style={styles.tabBadgeText}>{activeOrdersCount}</Text>
+            {isDesktop && (
+              <View style={styles.contentHeaderRight}>
+                <TouchableOpacity
+                  style={styles.contentRefreshBtn}
+                  onPress={onRefresh}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="refresh" size={15} color={Palette.primary} />
+                  <Text style={styles.contentRefreshText}>Refresh</Text>
+                </TouchableOpacity>
               </View>
             )}
-          </TouchableOpacity>
+          </View>
 
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'coupons' && styles.tabItemActive]}
-            onPress={() => setActiveTab('coupons')}
+          {/* Fast Mobile Navigation Pills Bar */}
+          {!isDesktop && (
+            <View style={styles.mobileTabBarContainer}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.mobileTabBarScroll}
+              >
+                {[
+                  { key: 'overview', label: 'Overview', icon: 'grid' },
+                  { key: 'products', label: `Services (${services.length})`, icon: 'construct' },
+                  { key: 'orders', label: `Orders (${bookings.length})`, icon: 'clipboard' },
+                  { key: 'coupons', label: `Coupons (${coupons.length})`, icon: 'pricetag' },
+                  { key: 'users', label: `Users (${providers.length})`, icon: 'people' },
+                  { key: 'reviews', label: `Reviews (${reviews.length})`, icon: 'star' },
+                ].map((t) => {
+                  const isActive = activeTab === t.key;
+                  return (
+                    <TouchableOpacity
+                      key={t.key}
+                      style={[styles.mobileTabPill, isActive && styles.mobileTabPillActive]}
+                      onPress={() => setActiveTab(t.key as AdminTab)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={isActive ? (t.icon as any) : (`${t.icon}-outline` as any)}
+                        size={13}
+                        color={isActive ? Palette.white : Palette.gray700}
+                      />
+                      <Text
+                        style={[
+                          styles.mobileTabPillText,
+                          isActive && styles.mobileTabPillTextActive,
+                        ]}
+                      >
+                        {t.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Main Body Content based on active tab */}
+          <ScrollView
+            style={styles.mainContainer}
+            contentContainerStyle={styles.mainScrollContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           >
-            <Ionicons
-              name={activeTab === 'coupons' ? 'pricetag' : 'pricetag-outline'}
-              size={16}
-              color={activeTab === 'coupons' ? Palette.primary : Palette.gray600}
-            />
-            <Text style={[styles.tabItemText, activeTab === 'coupons' && styles.tabItemTextActive]}>
-              Coupon Codes ({coupons.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'users' && styles.tabItemActive]}
-            onPress={() => setActiveTab('users')}
-          >
-            <Ionicons
-              name={activeTab === 'users' ? 'people' : 'people-outline'}
-              size={16}
-              color={activeTab === 'users' ? Palette.primary : Palette.gray600}
-            />
-            <Text style={[styles.tabItemText, activeTab === 'users' && styles.tabItemTextActive]}>
-              Users & Providers ({providers.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabItem, activeTab === 'reviews' && styles.tabItemActive]}
-            onPress={() => setActiveTab('reviews')}
-          >
-            <Ionicons
-              name={activeTab === 'reviews' ? 'star' : 'star-outline'}
-              size={16}
-              color={activeTab === 'reviews' ? Palette.primary : Palette.gray600}
-            />
-            <Text style={[styles.tabItemText, activeTab === 'reviews' && styles.tabItemTextActive]}>
-              Reviews ({reviews.length})
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-        </View>
-      </View>
-
-      {/* Main Body Content based on active tab */}
-      <ScrollView
-        style={styles.mainContainer}
-        contentContainerStyle={styles.mainScrollContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
         {/* ===================== TAB 1: OVERVIEW ===================== */}
         {activeTab === 'overview' && (
           <View>
@@ -538,6 +757,29 @@ export default function AdminDashboardScreen() {
         {/* ===================== TAB 2: PRODUCTS & SERVICES ===================== */}
         {activeTab === 'products' && (
           <View>
+            {/* Catalog Stats Overview */}
+            <View style={styles.catalogStatsBar}>
+              <View style={styles.catalogStatItem}>
+                <Text style={styles.catalogStatNum}>{services.length}</Text>
+                <Text style={styles.catalogStatLabel}>Total Services</Text>
+              </View>
+              <View style={styles.catalogStatDivider} />
+              <View style={styles.catalogStatItem}>
+                <Text style={styles.catalogStatNum}>{categories.length}</Text>
+                <Text style={styles.catalogStatLabel}>Categories</Text>
+              </View>
+              <View style={styles.catalogStatDivider} />
+              <View style={styles.catalogStatItem}>
+                <Text style={styles.catalogStatNum}>{providers.length}</Text>
+                <Text style={styles.catalogStatLabel}>Providers</Text>
+              </View>
+              <View style={styles.catalogStatDivider} />
+              <View style={styles.catalogStatItem}>
+                <Text style={styles.catalogStatNum}>{filteredServices.length}</Text>
+                <Text style={styles.catalogStatLabel}>Showing</Text>
+              </View>
+            </View>
+
             {/* Top Toolbar */}
             <View style={styles.toolbarRow}>
               <View style={styles.searchBox}>
@@ -712,7 +954,9 @@ export default function AdminDashboardScreen() {
                       <View style={styles.orderCardHeader}>
                         <View>
                           <Text style={styles.orderIdText}>Order #{b.id}</Text>
-                          <Text style={styles.orderDateText}>{b.date} • {b.timeSlot}</Text>
+                          <Text style={styles.orderDateText}>
+                            Created: {new Date(b.createdAt).toLocaleDateString()} • Scheduled: {b.date} ({b.timeSlot})
+                          </Text>
                         </View>
                         <View style={[styles.statusPill, { backgroundColor: badge.bg }]}>
                           <Text style={[styles.statusPillText, { color: badge.text }]}>
@@ -725,23 +969,45 @@ export default function AdminDashboardScreen() {
                       <Text style={styles.orderServiceTitle}>{b.serviceTitle}</Text>
                       <Text style={styles.orderCategory}>Category: {b.categoryName}</Text>
 
-                      {/* Customer & Address Details */}
+                      {/* Customer, Provider & Address Details */}
                       <View style={styles.orderDetailBox}>
                         <View style={styles.orderDetailRow}>
                           <Ionicons name="person-outline" size={14} color={Palette.gray600} />
                           <Text style={styles.orderDetailText}>
-                            {b.customerName} {b.customerPhone ? `(${b.customerPhone})` : ''}
+                            Customer: <Text style={{ fontWeight: '700' }}>{b.customerName}</Text> {b.customerPhone || b.customerContact ? `• 📞 ${b.customerPhone || b.customerContact}` : ''}
                           </Text>
                         </View>
+                        {b.customerEmail ? (
+                          <View style={styles.orderDetailRow}>
+                            <Ionicons name="mail-outline" size={14} color={Palette.gray600} />
+                            <Text style={styles.orderDetailText}>Email: {b.customerEmail}</Text>
+                          </View>
+                        ) : null}
                         <View style={styles.orderDetailRow}>
                           <Ionicons name="location-outline" size={14} color={Palette.gray600} />
                           <Text style={styles.orderDetailText} numberOfLines={1}>
-                            {b.address.street}, {b.address.city}
+                            Address: {b.address.street}, {b.address.city}
                           </Text>
                         </View>
                         <View style={styles.orderDetailRow}>
                           <Ionicons name="construct-outline" size={14} color={Palette.gray600} />
-                          <Text style={styles.orderDetailText}>Provider: {b.providerName}</Text>
+                          <Text style={styles.orderDetailText}>
+                            Provider: <Text style={{ fontWeight: '700' }}>{b.providerName}</Text>
+                          </Text>
+                        </View>
+                        <View style={styles.orderDetailRow}>
+                          <Ionicons name="card-outline" size={14} color={Palette.gray600} />
+                          <Text style={styles.orderDetailText}>
+                            Payment: {b.paymentMethod?.toUpperCase()} • Status:{' '}
+                            <Text
+                              style={{
+                                fontWeight: '700',
+                                color: b.paymentStatus === 'paid' ? Palette.accent : Palette.warning,
+                              }}
+                            >
+                              {b.paymentStatus?.toUpperCase()}
+                            </Text>
+                          </Text>
                         </View>
                       </View>
 
@@ -759,6 +1025,32 @@ export default function AdminDashboardScreen() {
                             </Text>
                           </View>
                         ) : null}
+                      </View>
+
+                      {/* Order Action Buttons: Full Details Modal + Live Chat */}
+                      <View style={styles.adminOrderActionRow}>
+                        <TouchableOpacity
+                          style={styles.adminViewDetailsBtn}
+                          onPress={() => setSelectedOrderForModal(b)}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="document-text-outline" size={15} color={Palette.primary} />
+                          <Text style={styles.adminViewDetailsBtnText}>View Full Details</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.adminChatOrderBtn}
+                          onPress={() =>
+                            router.push({
+                              pathname: '/chat/[id]',
+                              params: { id: b.id },
+                            })
+                          }
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="chatbubbles-outline" size={15} color={Palette.purple} />
+                          <Text style={styles.adminChatOrderBtnText}>Open Chat</Text>
+                        </TouchableOpacity>
                       </View>
 
                       {/* Realtime Status Advancer Controls */}
@@ -964,6 +1256,8 @@ export default function AdminDashboardScreen() {
           </View>
         )}
       </ScrollView>
+        </View>
+      </View>
 
       {/* ===================== MODAL: ADD PRODUCT / SERVICE ===================== */}
       <Modal
@@ -1044,6 +1338,29 @@ export default function AdminDashboardScreen() {
                       ]}
                     >
                       {c.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <Text style={styles.inputLabel}>Assign Provider</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                {providers.map((p) => (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[
+                      styles.modalPresetPill,
+                      newProviderId === p.id && styles.modalPresetPillActive,
+                    ]}
+                    onPress={() => setNewProviderId(p.id)}
+                  >
+                    <Text
+                      style={[
+                        styles.modalPresetPillText,
+                        newProviderId === p.id && styles.modalPresetPillTextActive,
+                      ]}
+                    >
+                      {p.name}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -1179,6 +1496,278 @@ export default function AdminDashboardScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ===================== MODAL: ORDER FULL DETAILS ===================== */}
+      <Modal
+        visible={!!selectedOrderForModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedOrderForModal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Order Details #{selectedOrderForModal?.id}</Text>
+                <Text style={{ fontSize: 11, color: Palette.gray500, marginTop: 2 }}>
+                  Booking Ref: {selectedOrderForModal?.orderId || selectedOrderForModal?.id}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setSelectedOrderForModal(null)}>
+                <Ionicons name="close" size={24} color={Palette.gray600} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedOrderForModal && (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+                {/* Status Badges Row */}
+                <View style={styles.modalOrderBadgesRow}>
+                  <View
+                    style={[
+                      styles.statusPill,
+                      { backgroundColor: getStatusBadgeColor(selectedOrderForModal.status).bg },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.statusPillText,
+                        { color: getStatusBadgeColor(selectedOrderForModal.status).text },
+                      ]}
+                    >
+                      STATUS: {selectedOrderForModal.status.replace(/_/g, ' ').toUpperCase()}
+                    </Text>
+                  </View>
+
+                  <View style={[styles.statusPill, { backgroundColor: '#F3E8FF' }]}>
+                    <Text style={[styles.statusPillText, { color: '#6B21A8' }]}>
+                      PROVIDER: {selectedOrderForModal.providerStatus || 'Pending'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Customer Information Block */}
+                <View style={styles.modalSectionCard}>
+                  <Text style={styles.modalSectionHeading}>Customer Information</Text>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Name:</Text>
+                    <Text style={styles.modalInfoValue}>{selectedOrderForModal.customerName}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Phone:</Text>
+                    <Text style={styles.modalInfoValue}>
+                      {selectedOrderForModal.customerPhone || selectedOrderForModal.customerContact || 'Not provided'}
+                    </Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Email:</Text>
+                    <Text style={styles.modalInfoValue}>{selectedOrderForModal.customerEmail || 'Not provided'}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Customer ID:</Text>
+                    <Text style={[styles.modalInfoValue, { fontSize: 11, color: Palette.gray500 }]}>
+                      {selectedOrderForModal.customerId || selectedOrderForModal.userId}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Service Information Block */}
+                <View style={styles.modalSectionCard}>
+                  <Text style={styles.modalSectionHeading}>Service Details</Text>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Service:</Text>
+                    <Text style={styles.modalInfoValue}>{selectedOrderForModal.serviceTitle}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Category:</Text>
+                    <Text style={styles.modalInfoValue}>{selectedOrderForModal.categoryName}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Base Price:</Text>
+                    <Text style={styles.modalInfoValue}>${selectedOrderForModal.price || selectedOrderForModal.totalPrice}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Total Amount:</Text>
+                    <Text style={[styles.modalInfoValue, { fontWeight: '800', color: Palette.primary }]}>
+                      ${selectedOrderForModal.totalPrice}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Provider Information Block */}
+                <View style={styles.modalSectionCard}>
+                  <Text style={styles.modalSectionHeading}>Assigned Provider</Text>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Provider:</Text>
+                    <Text style={styles.modalInfoValue}>{selectedOrderForModal.providerName}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Provider ID:</Text>
+                    <Text style={[styles.modalInfoValue, { fontSize: 11, color: Palette.gray500 }]}>
+                      {selectedOrderForModal.providerId}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Schedule & Address Block */}
+                <View style={styles.modalSectionCard}>
+                  <Text style={styles.modalSectionHeading}>Schedule & Delivery Address</Text>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Date:</Text>
+                    <Text style={styles.modalInfoValue}>{selectedOrderForModal.date}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Time Slot:</Text>
+                    <Text style={styles.modalInfoValue}>{selectedOrderForModal.timeSlot}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Street:</Text>
+                    <Text style={styles.modalInfoValue}>{selectedOrderForModal.address.street}</Text>
+                  </View>
+                  {selectedOrderForModal.address.apartment ? (
+                    <View style={styles.modalInfoRow}>
+                      <Text style={styles.modalInfoLabel}>Apartment/Suite:</Text>
+                      <Text style={styles.modalInfoValue}>{selectedOrderForModal.address.apartment}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>City / State:</Text>
+                    <Text style={styles.modalInfoValue}>
+                      {selectedOrderForModal.address.city}
+                      {selectedOrderForModal.address.state ? `, ${selectedOrderForModal.address.state}` : ''}
+                      {selectedOrderForModal.address.zipCode ? ` ${selectedOrderForModal.address.zipCode}` : ''}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Payment Information Block */}
+                <View style={styles.modalSectionCard}>
+                  <Text style={styles.modalSectionHeading}>Payment & Promotions</Text>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Method:</Text>
+                    <Text style={styles.modalInfoValue}>
+                      {selectedOrderForModal.paymentMethod === 'cash' ? 'Cash on Delivery (COD)' : selectedOrderForModal.paymentMethod?.toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Payment Status:</Text>
+                    <Text
+                      style={[
+                        styles.modalInfoValue,
+                        {
+                          fontWeight: '700',
+                          color: selectedOrderForModal.paymentStatus === 'paid' ? Palette.accent : Palette.warning,
+                        },
+                      ]}
+                    >
+                      {selectedOrderForModal.paymentStatus?.toUpperCase()}
+                    </Text>
+                  </View>
+                  {selectedOrderForModal.couponCode ? (
+                    <View style={styles.modalInfoRow}>
+                      <Text style={styles.modalInfoLabel}>Promo Applied:</Text>
+                      <Text style={[styles.modalInfoValue, { color: '#059669' }]}>
+                        {selectedOrderForModal.couponCode} (-${selectedOrderForModal.discountAmount || 0})
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* Special Instructions & Timestamps */}
+                {selectedOrderForModal.notes ? (
+                  <View style={styles.modalSectionCard}>
+                    <Text style={styles.modalSectionHeading}>Customer Notes</Text>
+                    <Text style={{ fontSize: 13, color: Palette.gray700, fontStyle: 'italic' }}>
+                      &ldquo;{selectedOrderForModal.notes}&rdquo;
+                    </Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.modalSectionCard}>
+                  <Text style={styles.modalSectionHeading}>System Timestamps</Text>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Created At:</Text>
+                    <Text style={styles.modalInfoValue}>{new Date(selectedOrderForModal.createdAt).toLocaleString()}</Text>
+                  </View>
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Updated At:</Text>
+                    <Text style={styles.modalInfoValue}>{new Date(selectedOrderForModal.updatedAt).toLocaleString()}</Text>
+                  </View>
+                </View>
+
+                {/* Live Chat Launcher Button */}
+                <TouchableOpacity
+                  style={styles.modalLaunchChatBtn}
+                  onPress={() => {
+                    const id = selectedOrderForModal.id;
+                    setSelectedOrderForModal(null);
+                    router.push({ pathname: '/chat/[id]', params: { id } });
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="chatbubbles" size={18} color={Palette.white} />
+                  <Text style={styles.modalLaunchChatBtnText}>Open Order Live Chat</Text>
+                </TouchableOpacity>
+
+                {/* Status Updater Buttons in Modal */}
+                <View style={{ marginTop: 14 }}>
+                  <Text style={styles.orderActionsLabel}>UPDATE STATUS DIRECTLY:</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                    <TouchableOpacity
+                      style={[styles.statusActionBtn, { backgroundColor: '#FEF08A' }]}
+                      onPress={async () => {
+                        await handleUpdateOrderStatus(selectedOrderForModal.id, 'accepted');
+                        setSelectedOrderForModal((prev: Booking | null) => (prev ? { ...prev, status: 'accepted' } : null));
+                      }}
+                    >
+                      <Text style={[styles.statusActionText, { color: '#854D0E' }]}>Accept</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.statusActionBtn, { backgroundColor: '#F3E8FF' }]}
+                      onPress={async () => {
+                        await handleUpdateOrderStatus(selectedOrderForModal.id, 'on_the_way');
+                        setSelectedOrderForModal((prev: Booking | null) => (prev ? { ...prev, status: 'on_the_way' } : null));
+                      }}
+                    >
+                      <Text style={[styles.statusActionText, { color: '#6B21A8' }]}>On The Way</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.statusActionBtn, { backgroundColor: '#DBEAFE' }]}
+                      onPress={async () => {
+                        await handleUpdateOrderStatus(selectedOrderForModal.id, 'in_progress');
+                        setSelectedOrderForModal((prev: Booking | null) => (prev ? { ...prev, status: 'in_progress' } : null));
+                      }}
+                    >
+                      <Text style={[styles.statusActionText, { color: '#1E40AF' }]}>In Progress</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.statusActionBtn, { backgroundColor: '#DEF7EC' }]}
+                      onPress={async () => {
+                        await handleUpdateOrderStatus(selectedOrderForModal.id, 'completed');
+                        setSelectedOrderForModal((prev: Booking | null) => (prev ? { ...prev, status: 'completed' } : null));
+                      }}
+                    >
+                      <Text style={[styles.statusActionText, { color: '#03543F' }]}>Complete</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.statusActionBtn, { backgroundColor: '#FEE2E2' }]}
+                      onPress={async () => {
+                        await handleUpdateOrderStatus(selectedOrderForModal.id, 'cancelled');
+                        setSelectedOrderForModal((prev: Booking | null) => (prev ? { ...prev, status: 'cancelled' } : null));
+                      }}
+                    >
+                      <Text style={[styles.statusActionText, { color: '#991B1B' }]}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1188,143 +1777,363 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0F172A',
   },
-  topNavbar: {
+  adminLayoutRow: {
+    flex: 1,
+    flexDirection: 'row',
     backgroundColor: '#0F172A',
+  },
+  desktopSidebarWrapper: {
+    width: 270,
+    backgroundColor: '#0F172A',
+    borderRightWidth: 1,
+    borderRightColor: '#1E293B',
+  },
+  sidebarContainer: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+    flexDirection: 'column',
+  },
+  drawerSidebarContainer: {
+    width: 280,
+    height: '100%',
+    backgroundColor: '#0F172A',
+  },
+  drawerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    flexDirection: 'row',
+  },
+  drawerDismissOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+  drawerSidebarWrapper: {
+    width: 280,
+    height: '100%',
+    backgroundColor: '#0F172A',
+    ...Shadows.lg,
+  },
+  sidebarHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#1E293B',
   },
-  topNavbarInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    maxWidth: 1200,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  topNavLeft: {
+  sidebarBrandRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    marginBottom: 8,
   },
-  adminLogoBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
+  sidebarLogoBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
     backgroundColor: Palette.danger,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  portalTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  topNavTitle: {
-    fontSize: 16,
+  sidebarBrandTitle: {
+    fontSize: 15,
     fontWeight: '800',
     color: '#F8FAFC',
+    letterSpacing: 0.3,
   },
-  cloudBadge: {
+  sidebarBrandSub: {
+    fontSize: 10.5,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  drawerCloseBtn: {
+    padding: 4,
+  },
+  sidebarLiveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    gap: 5,
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: BorderRadius.full,
+    alignSelf: 'flex-start',
   },
-  greenPulse: {
+  greenPulseDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
     backgroundColor: '#10B981',
   },
-  cloudBadgeText: {
-    fontSize: 9,
+  sidebarLiveText: {
+    fontSize: 9.5,
     fontWeight: '700',
     color: '#34D399',
   },
-  topNavSub: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 1,
+  sidebarNavScroll: {
+    flex: 1,
   },
-  topNavRight: {
+  sidebarNavContent: {
+    paddingHorizontal: 10,
+    paddingTop: 14,
+    paddingBottom: 20,
+    gap: 4,
+  },
+  sidebarSectionLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 1,
+    marginBottom: 8,
+    paddingHorizontal: 10,
+  },
+  sidebarNavItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: BorderRadius.md,
+    backgroundColor: 'transparent',
+  },
+  sidebarNavItemActive: {
+    backgroundColor: '#1E293B',
+    borderLeftWidth: 3,
+    borderLeftColor: Palette.primary,
+  },
+  sidebarNavText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  sidebarNavTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  sidebarCountBadge: {
+    backgroundColor: '#334155',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+  },
+  sidebarCountBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  sidebarFooter: {
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#1E293B',
+    backgroundColor: '#0B1120',
+    gap: 10,
+  },
+  adminProfileCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  customerViewBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
     backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    padding: 8,
     borderRadius: BorderRadius.md,
     borderWidth: 1,
     borderColor: '#334155',
   },
-  customerViewBtnText: {
+  adminAvatarBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Palette.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adminProfileName: {
     fontSize: 11.5,
-    fontWeight: '700',
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  adminProfileEmail: {
+    fontSize: 9.5,
+    color: '#94A3B8',
+  },
+  adminTag: {
+    backgroundColor: 'rgba(37, 99, 235, 0.2)',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  adminTagText: {
+    fontSize: 8.5,
+    fontWeight: '800',
     color: '#60A5FA',
   },
-  refreshBtn: {
-    backgroundColor: '#1E293B',
-    padding: 6,
+  sidebarLogoutBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: Palette.danger,
+    paddingVertical: 10,
     borderRadius: BorderRadius.md,
+    ...Shadows.sm,
   },
-  tabsBarWrapper: {
-    backgroundColor: '#1E293B',
+  sidebarLogoutText: {
+    color: Palette.white,
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  mobileTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    borderBottomColor: '#1E293B',
   },
-  tabsBarInner: {
-    maxWidth: 1200,
-    width: '100%',
-    alignSelf: 'center',
+  mobileHamburgerBtn: {
+    padding: 4,
   },
-  tabsScrollContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  mobileHeaderCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  tabItem: {
+  mobileLogoBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: Palette.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mobileHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  mobileRefreshBtn: {
+    padding: 4,
+  },
+  mainContentColumn: {
+    flex: 1,
+    flexDirection: 'column',
+    backgroundColor: '#F8FAFC',
+  },
+  contentHeaderBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Palette.white,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  contentHeaderLeft: {
+    flex: 1,
+  },
+  contentHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  contentHeaderSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  contentHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  contentRefreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  mobileTabBarContainer: {
+    backgroundColor: Palette.white,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingVertical: 8,
+  },
+  mobileTabBarScroll: {
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  mobileTabPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: BorderRadius.md,
-    backgroundColor: 'transparent',
-  },
-  tabItemActive: {
-    backgroundColor: '#0F172A',
+    borderRadius: BorderRadius.full,
+    backgroundColor: '#F1F5F9',
     borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  mobileTabPillActive: {
+    backgroundColor: Palette.primary,
     borderColor: Palette.primary,
   },
-  tabItemText: {
+  mobileTabPillText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: '#475569',
   },
-  tabItemTextActive: {
-    color: Palette.primary,
-    fontWeight: '800',
-  },
-  tabBadge: {
-    backgroundColor: Palette.danger,
-    borderRadius: 8,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  tabBadgeText: {
+  mobileTabPillTextActive: {
     color: Palette.white,
-    fontSize: 9,
-    fontWeight: '800',
+    fontWeight: '700',
+  },
+  contentRefreshText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: Palette.primary,
+  },
+  catalogStatsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: Palette.white,
+    paddingVertical: 12,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 14,
+    ...Shadows.sm,
+  },
+  catalogStatItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  catalogStatNum: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: Palette.primary,
+  },
+  catalogStatLabel: {
+    fontSize: 10.5,
+    color: '#64748B',
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  catalogStatDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#E2E8F0',
   },
   mainContainer: {
     flex: 1,
@@ -2031,5 +2840,101 @@ const styles = StyleSheet.create({
     color: Palette.white,
     fontSize: 13.5,
     fontWeight: '800',
+  },
+  adminOrderActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  adminViewDetailsBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    backgroundColor: Palette.primarySoft,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  adminViewDetailsBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Palette.primary,
+  },
+  adminChatOrderBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    backgroundColor: '#F3E8FF',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+  },
+  adminChatOrderBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Palette.purple,
+  },
+  modalOrderBadgesRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  modalSectionCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: BorderRadius.lg,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  modalSectionHeading: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0F172A',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  modalInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 3,
+  },
+  modalInfoLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  modalInfoValue: {
+    fontSize: 12.5,
+    color: '#0F172A',
+    fontWeight: '600',
+    maxWidth: '65%',
+    textAlign: 'right',
+  },
+  modalLaunchChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Palette.purple,
+    paddingVertical: 10,
+    borderRadius: BorderRadius.md,
+    marginTop: 8,
+  },
+  modalLaunchChatBtnText: {
+    color: Palette.white,
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

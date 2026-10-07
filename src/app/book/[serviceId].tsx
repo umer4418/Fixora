@@ -1,21 +1,21 @@
-import React, { useState, useMemo } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
   Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, router } from 'expo-router';
-import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
-import { useMarketplace } from '../../context/MarketplaceContext';
-import { useAuth } from '../../context/AuthContext';
 import { Button } from '../../components/common/Button';
 import { AddressSelectorModal } from '../../components/marketplace/AddressSelectorModal';
+import { BorderRadius, Palette, Shadows, Spacing } from '../../constants/theme';
+import { useAuth } from '../../context/AuthContext';
+import { useMarketplace } from '../../context/MarketplaceContext';
 
 export default function BookServiceScreen() {
   const { serviceId } = useLocalSearchParams<{ serviceId: string }>();
@@ -55,6 +55,7 @@ export default function BookServiceScreen() {
 
   const [selectedDate, setSelectedDate] = useState<string>(availableDates[0].dateStr);
   const [selectedSlot, setSelectedSlot] = useState<string>(timeSlots[1]);
+  const [contactPhone, setContactPhone] = useState<string>(user?.phone || '');
   const [notes, setNotes] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'wallet'>('cash');
   const [addressModalVisible, setAddressModalVisible] = useState(false);
@@ -118,29 +119,54 @@ export default function BookServiceScreen() {
 
   const handleConfirmBooking = async () => {
     if (!selectedAddress) {
-      Alert.alert('Address Required', 'Please select or add an address for the service.', [
-        { text: 'Select Address', onPress: () => setAddressModalVisible(true) },
-      ]);
+      setAddressModalVisible(true);
+      return;
+    }
+
+    if (!user) {
+      router.push('/auth/login');
       return;
     }
 
     setIsSubmitting(true);
     try {
+      const finalContactPhone = contactPhone.trim() || user.phone || '';
       const created = await bookService({
-        customerId: user?.id || 'cust-demo',
-        customerName: user?.name || 'Alex Morgan',
-        customerPhone: user?.phone || '+1 (555) 987-6543',
-        customerEmail: user?.email || 'alex.morgan@example.com',
+        userId: user.id,
+        customerId: user.id,
+        customerName: user.name || user.email?.split('@')[0] || 'Customer',
+        customerPhone: finalContactPhone,
+        customerContact: finalContactPhone || user.email || '',
+        customerEmail: user.email || '',
         providerId: service.providerId,
         providerName: service.providerName,
         providerAvatar: service.providerAvatar,
         serviceId: service.id,
         serviceTitle: service.title,
+        serviceName: service.title,
         categoryName: service.categoryName,
         serviceImage: service.imageUrl,
+        quantity: 1,
+        price: service.price,
         totalPrice,
+        totalAmount: totalPrice,
+        orderStatus: 'Placed',
+        bookingStatus: 'Pending',
+        providerStatus: 'Pending',
+        items: [
+          {
+            id: service.id,
+            serviceId: service.id,
+            title: service.title,
+            price: service.price,
+            quantity: 1,
+            image: service.imageUrl,
+          },
+        ],
         date: selectedDate,
+        bookingDate: selectedDate,
         timeSlot: selectedSlot,
+        bookingTime: selectedSlot,
         address: selectedAddress,
         notes: notes.trim(),
         paymentStatus: paymentMethod === 'cash' ? 'unpaid' : 'paid',
@@ -296,11 +322,27 @@ export default function BookServiceScreen() {
           )}
         </View>
 
-        {/* Step 4: Special Instructions / Notes */}
+        {/* Step 4: Contact Phone Number */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeadingRow}>
+            <Ionicons name="call" size={18} color={Palette.primary} />
+            <Text style={styles.sectionHeading}>4. Contact Phone Number</Text>
+          </View>
+          <TextInput
+            style={styles.notesInput}
+            placeholder="e.g. +1 (555) 234-5678 (Used for provider arrival updates)"
+            placeholderTextColor={Palette.gray400}
+            keyboardType="phone-pad"
+            value={contactPhone}
+            onChangeText={setContactPhone}
+          />
+        </View>
+
+        {/* Step 5: Special Instructions / Notes */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeadingRow}>
             <Ionicons name="document-text" size={18} color={Palette.primary} />
-            <Text style={styles.sectionHeading}>4. Special Instructions (Optional)</Text>
+            <Text style={styles.sectionHeading}>5. Special Instructions (Optional)</Text>
           </View>
           <TextInput
             style={styles.notesInput}
@@ -313,11 +355,11 @@ export default function BookServiceScreen() {
           />
         </View>
 
-        {/* Step 5: Payment Method */}
+        {/* Step 6: Payment Method */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeadingRow}>
             <Ionicons name="card" size={18} color={Palette.primary} />
-            <Text style={styles.sectionHeading}>5. Payment Method</Text>
+            <Text style={styles.sectionHeading}>6. Payment Method</Text>
           </View>
 
           <View style={styles.paymentMethodsCol}>
@@ -367,11 +409,11 @@ export default function BookServiceScreen() {
           </View>
         </View>
 
-        {/* Step 6: Coupons & Promotional Discounts */}
+        {/* Step 7: Coupons & Promotional Discounts */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeadingRow}>
             <Ionicons name="pricetag" size={18} color={Palette.primary} />
-            <Text style={styles.sectionHeading}>6. Promo & Coupon Code</Text>
+            <Text style={styles.sectionHeading}>7. Promo & Coupon Code</Text>
           </View>
 
           {appliedCoupon ? (

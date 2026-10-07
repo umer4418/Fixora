@@ -11,6 +11,11 @@ import {
   Coupon,
 } from '../types';
 import * as ServiceAPI from '../services/marketplaceService';
+import {
+  INITIAL_CATEGORIES,
+  INITIAL_SERVICES,
+  INITIAL_PROVIDERS,
+} from '../services/seedData';
 import { useAuth } from './AuthContext';
 
 interface MarketplaceContextType {
@@ -26,11 +31,12 @@ interface MarketplaceContextType {
   selectedAddress: Address | null;
   unreadNotificationsCount: number;
   isLoading: boolean;
-  refreshAll: () => Promise<void>;
+  refreshAll: (force?: boolean) => Promise<void>;
   
   // Bookings
   bookService: (data: Omit<Booking, 'id' | 'createdAt' | 'updatedAt' | 'status'>) => Promise<Booking>;
   changeBookingStatus: (bookingId: string, status: BookingStatus, reason?: string) => Promise<void>;
+  respondToOrder: (bookingId: string, action: 'accept' | 'reject', reason?: string) => Promise<void>;
   
   // Reviews
   createReview: (data: Omit<Review, 'id' | 'createdAt'>) => Promise<Review>;
@@ -55,6 +61,9 @@ interface MarketplaceContextType {
   removeCoupon: (id: string) => Promise<void>;
   applyCouponCode: (code: string, subtotal: number) => Promise<{ valid: boolean; discount: number; message: string; coupon?: Coupon }>;
   
+  // User session reset
+  clearUserState: () => void;
+
   // Provider / Admin operations
   createService: (data: Omit<Service, 'id' | 'createdAt' | 'rating' | 'reviewsCount'>) => Promise<Service>;
   editService: (id: string, updates: Partial<Service>) => Promise<void>;
@@ -68,11 +77,15 @@ interface MarketplaceContextType {
 
 const MarketplaceContext = createContext<MarketplaceContextType | undefined>(undefined);
 
+// Concurrency control: prevent burst requests when screens mount or focus simultaneously
+let activeRefreshPromise: Promise<void> | null = null;
+let lastRefreshTime = 0;
+
 export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
-  const [providers, setProviders] = useState<User[]>([]);
+  const [categories, setCategories] = useState<Category[]>(INITIAL_CATEGORIES);
+  const [services, setServices] = useState<Service[]>(INITIAL_SERVICES);
+  const [providers, setProviders] = useState<User[]>(INITIAL_PROVIDERS);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -82,51 +95,59 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  const refreshAll = useCallback(async () => {
-    try {
-      const [cats, srvs, provs, bks, revs, notifs, addrs, favs, cpns] = await Promise.all([
-        ServiceAPI.getCategories(),
-        ServiceAPI.getServices(),
-        ServiceAPI.getProviders(),
-        ServiceAPI.getBookings(),
-        ServiceAPI.getReviews(),
-        ServiceAPI.getNotifications(user?.id),
-        ServiceAPI.getAddresses(),
-        ServiceAPI.getFavorites(),
-        ServiceAPI.getCoupons(),
-      ]);
+  const clearUserState = useCallback(() => {
+    setBookings([]);
+    setAddresses([]);
+    setFavorites([]);
+    setNotifications([]);
+    setSelectedAddress(null);
+  }, []);
 
-      setCategories(cats);
-      setServices(srvs);
-      setProviders(provs);
-      setBookings(bks);
-      setReviews(revs);
-      setNotifications(notifs);
-      setAddresses(addrs);
-      setFavorites(favs);
-      setCoupons(cpns);
-    } catch (e) {
-      console.warn('Failed loading marketplace data', e);
+  const refreshAll = useCallback(async (force = false) => {
+    const now = Date.now();
+
+    // 1. If a refresh is already in-flight, reuse it so we never send redundant parallel bursts
+    if (!force && activeRefreshPromise) {
+      return activeRefreshPromise;
     }
-  }, [user]);
 
-  useEffect(() => {
-    let isMounted = true;
-    (async () => {
+    // 2. Throttle calls within 6 seconds unless user explicitly requested a forced refresh (e.g., pull-to-refresh)
+    if (!force && now - lastRefreshTime < 6000) {
+      return;
+    }
+
+    lastRefreshTime = now;
+    activeRefreshPromise = (async () => {
       try {
+        if (!user) {
+          clearUserState();
+          const [cats, srvs, provs, revs, cpns] = await Promise.all([
+            ServiceAPI.getCategories(),
+            ServiceAPI.getServices(),
+            ServiceAPI.getProviders(),
+            ServiceAPI.getReviews(),
+            ServiceAPI.getCoupons(),
+          ]);
+          setCategories(cats);
+          setServices(srvs);
+          setProviders(provs);
+          setReviews(revs);
+          setCoupons(cpns);
+          return;
+        }
+
         const [cats, srvs, provs, bks, revs, notifs, addrs, favs, cpns] = await Promise.all([
           ServiceAPI.getCategories(),
           ServiceAPI.getServices(),
           ServiceAPI.getProviders(),
-          ServiceAPI.getBookings(),
+          ServiceAPI.getBookings(user.id, user.role),
           ServiceAPI.getReviews(),
-          ServiceAPI.getNotifications(user?.id),
-          ServiceAPI.getAddresses(),
-          ServiceAPI.getFavorites(),
+          ServiceAPI.getNotifications(user.id),
+          ServiceAPI.getAddresses(user.id),
+          ServiceAPI.getFavorites(user.id),
           ServiceAPI.getCoupons(),
         ]);
 
-        if (!isMounted) return;
         setCategories(cats);
         setServices(srvs);
         setProviders(provs);
@@ -140,27 +161,119 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const defaultAddr = addrs.find((a) => a.isDefault) || addrs[0] || null;
         setSelectedAddress(defaultAddr);
       } catch (e) {
-        console.warn('Failed loading marketplace data', e);
+        console.info('[Fixora Context] Marketplace data sync notice:', e);
+      }
+    })().finally(() => {
+      activeRefreshPromise = null;
+    });
+
+    return activeRefreshPromise;
+  }, [user, clearUserState]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let unsubOrders: ServiceAPI.Unsubscribe | null = null;
+    let unsubNotifs: ServiceAPI.Unsubscribe | null = null;
+
+    (async () => {
+      // 1. Immediately clear old session and let cached data render
+      if (!user) {
+        clearUserState();
+      }
+
+      // Fast initial fetch
+      try {
+        await refreshAll();
+      } catch (e) {
+        console.warn('Initial marketplace data notice:', e);
       } finally {
-        if (isMounted) setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+
+      if (user && isMounted) {
+        // Attach live real-time synchronization listener for orders & bookings
+        unsubOrders = ServiceAPI.subscribeToOrders(
+          user.id,
+          user.role,
+          (liveOrders) => {
+            if (isMounted) {
+              setBookings(liveOrders);
+            }
+          },
+          (err) => {
+            console.warn('Real-time orders sync error:', err);
+          }
+        );
+
+        // Attach live real-time synchronization listener for notifications
+        unsubNotifs = ServiceAPI.subscribeToNotifications(
+          user.id,
+          (liveNotifs) => {
+            if (isMounted) {
+              setNotifications(liveNotifs);
+            }
+          },
+          (err) => {
+            console.warn('Real-time notifications sync error:', err);
+          }
+        );
       }
     })();
 
+    // Cross-tab synchronization on web browsers for multi-tab testing
+    let storageListener: ((e: StorageEvent) => void) | null = null;
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      storageListener = (e: StorageEvent) => {
+        if (e.key && e.key.includes('@fixora')) {
+          refreshAll();
+        }
+      };
+      window.addEventListener('storage', storageListener);
+    }
+
     return () => {
       isMounted = false;
+      if (unsubOrders) {
+        unsubOrders();
+      }
+      if (unsubNotifs) {
+        unsubNotifs();
+      }
+      if (storageListener && typeof window !== 'undefined' && window.removeEventListener) {
+        window.removeEventListener('storage', storageListener);
+      }
     };
-  }, [user]);
+  }, [user, clearUserState, refreshAll]);
 
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
 
   const bookService = async (
     data: Omit<Booking, 'id' | 'createdAt' | 'updatedAt' | 'status'>
   ): Promise<Booking> => {
-    const created = await ServiceAPI.createBooking(data);
-    setBookings((prev) => [created, ...prev]);
-    // update notifications
-    const notifs = await ServiceAPI.getNotifications(user?.id);
-    setNotifications(notifs);
+    const effectiveUserId = user?.id || data.userId || 'guest_user';
+
+    const bookingPayload = {
+      ...data,
+      userId: effectiveUserId,
+      customerId: effectiveUserId,
+      customerName: user?.name || data.customerName || 'Customer',
+      customerEmail: user?.email || data.customerEmail || '',
+      customerPhone: user?.phone || data.customerPhone || '',
+    };
+
+    const created = await ServiceAPI.createBooking(bookingPayload);
+    setBookings((prev) => {
+      if (prev.some((b) => b.id === created.id)) return prev;
+      return [created, ...prev];
+    });
+
+    if (effectiveUserId) {
+      ServiceAPI.getNotifications(effectiveUserId)
+        .then((notifs) => setNotifications(notifs))
+        .catch(() => {});
+    }
     return created;
   };
 
@@ -169,11 +282,55 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
     status: BookingStatus,
     reason?: string
   ): Promise<void> => {
-    const updated = await ServiceAPI.updateBookingStatus(bookingId, status, reason);
+    const updated = await ServiceAPI.updateBookingStatus(
+      bookingId,
+      status,
+      reason,
+      user?.id,
+      user?.role
+    );
     if (updated) {
-      setBookings((prev) => prev.map((b) => (b.id === bookingId ? updated : b)));
-      const notifs = await ServiceAPI.getNotifications(user?.id);
-      setNotifications(notifs);
+      setBookings((prev) =>
+        prev.map((b) =>
+          b.id === bookingId ||
+          b.orderId === bookingId ||
+          (updated.orderId && b.id === updated.orderId)
+            ? updated
+            : b
+        )
+      );
+      if (user?.id) {
+        const notifs = await ServiceAPI.getNotifications(user.id);
+        setNotifications(notifs);
+      }
+    }
+  };
+
+  const respondToOrder = async (
+    bookingId: string,
+    action: 'accept' | 'reject',
+    reason?: string
+  ): Promise<void> => {
+    const updated = await ServiceAPI.respondToOrderRequest(
+      bookingId,
+      action,
+      reason,
+      user?.id
+    );
+    if (updated) {
+      setBookings((prev) =>
+        prev.map((b) =>
+          b.id === bookingId ||
+          b.orderId === bookingId ||
+          (updated.orderId && b.id === updated.orderId)
+            ? updated
+            : b
+        )
+      );
+      if (user?.id) {
+        const notifs = await ServiceAPI.getNotifications(user.id);
+        setNotifications(notifs);
+      }
     }
   };
 
@@ -194,7 +351,8 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   const toggleFavorite = async (serviceId: string): Promise<boolean> => {
-    const isNowFav = await ServiceAPI.toggleFavorite(serviceId);
+    if (!user) return false;
+    const isNowFav = await ServiceAPI.toggleFavorite(serviceId, user.id);
     setFavorites((prev) =>
       isNowFav ? [...prev, serviceId] : prev.filter((id) => id !== serviceId)
     );
@@ -206,41 +364,42 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   const addAddress = async (data: Omit<Address, 'id'>): Promise<Address> => {
-    const created = await ServiceAPI.addAddress(data);
-    const updatedList = await ServiceAPI.getAddresses();
-    setAddresses(updatedList);
-    if (created.isDefault || !selectedAddress) {
-      setSelectedAddress(created);
-    }
+    const effectiveUserId = user?.id || 'guest_user';
+    const created = await ServiceAPI.addAddress(data, effectiveUserId);
+    setAddresses((prev) => [created, ...prev.filter((a) => a.id !== created.id)]);
+    setSelectedAddress(created);
     return created;
   };
 
   const removeAddress = async (id: string): Promise<void> => {
-    await ServiceAPI.deleteAddress(id);
-    const updatedList = await ServiceAPI.getAddresses();
+    if (!user) return;
+    await ServiceAPI.deleteAddress(id, user.id);
+    const updatedList = await ServiceAPI.getAddresses(user.id);
     setAddresses(updatedList);
     if (selectedAddress?.id === id) {
-      setSelectedAddress(updatedList[0] || null);
+      setSelectedAddress(updatedList.find((a) => a.isDefault) || updatedList[0] || null);
     }
   };
 
   const setDefaultAddress = async (id: string): Promise<void> => {
-    await ServiceAPI.setDefaultAddress(id);
-    const updatedList = await ServiceAPI.getAddresses();
+    if (!user) return;
+    await ServiceAPI.setDefaultAddress(id, user.id);
+    const updatedList = await ServiceAPI.getAddresses(user.id);
     setAddresses(updatedList);
     const target = updatedList.find((a) => a.id === id);
     if (target) setSelectedAddress(target);
   };
 
   const markNotificationRead = async (id: string): Promise<void> => {
-    await ServiceAPI.markNotificationAsRead(id);
+    await ServiceAPI.markNotificationAsRead(id, user?.id);
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
   };
 
   const markAllNotificationsRead = async (): Promise<void> => {
-    await ServiceAPI.markAllNotificationsAsRead(user?.id);
+    if (!user) return;
+    await ServiceAPI.markAllNotificationsAsRead(user.id);
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   };
 
@@ -334,8 +493,10 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         unreadNotificationsCount,
         isLoading,
         refreshAll,
+        clearUserState,
         bookService,
         changeBookingStatus,
+        respondToOrder,
         createReview,
         removeReview,
         toggleFavorite,

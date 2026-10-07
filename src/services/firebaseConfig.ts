@@ -6,7 +6,11 @@ import {
   initializeAuth,
   inMemoryPersistence,
 } from 'firebase/auth';
-import { Firestore, getFirestore } from 'firebase/firestore';
+import {
+  Firestore,
+  getFirestore,
+  initializeFirestore,
+} from 'firebase/firestore';
 
 /**
  * Fixora Firebase Configuration
@@ -82,7 +86,13 @@ export function initFirebase(customConfig?: typeof DEFAULT_FIREBASE_CONFIG) {
       firebaseAuth = getAuth(firebaseApp);
     }
 
-    firestoreDb = getFirestore(firebaseApp);
+    try {
+      firestoreDb = initializeFirestore(firebaseApp, {
+        experimentalForceLongPolling: true,
+      });
+    } catch {
+      firestoreDb = getFirestore(firebaseApp);
+    }
 
     return { app: firebaseApp, auth: firebaseAuth, db: firestoreDb };
   } catch (error) {
@@ -91,7 +101,13 @@ export function initFirebase(customConfig?: typeof DEFAULT_FIREBASE_CONFIG) {
       if (getApps().length > 0) {
         firebaseApp = getApp();
         firebaseAuth = getAuth(firebaseApp);
-        firestoreDb = getFirestore(firebaseApp);
+        try {
+          firestoreDb = initializeFirestore(firebaseApp, {
+            experimentalForceLongPolling: true,
+          });
+        } catch {
+          firestoreDb = getFirestore(firebaseApp);
+        }
         return { app: firebaseApp, auth: firebaseAuth, db: firestoreDb };
       }
     } catch (e) {

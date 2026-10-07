@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Image,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,14 +21,26 @@ export default function ProfileScreen() {
   const { user, logout } = useAuth();
   const { bookings, favorites, addresses } = useMarketplace();
 
-  const userBookings = bookings.filter((b) => !user || b.customerId === user.id || b.customerEmail === user.email);
+  const userBookings = user ? bookings.filter((b) => b.customerId === user.id) : [];
   const activeCount = userBookings.filter(
     (b) => b.status === 'pending' || b.status === 'accepted' || b.status === 'in_progress' || b.status === 'on_the_way'
   ).length;
   const completedCount = userBookings.filter((b) => b.status === 'completed').length;
   const defaultAddress = addresses.find((a) => a.isDefault) || addresses[0];
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm('Are you sure you want to sign out?')
+          : true;
+      if (confirmed) {
+        await logout();
+        router.replace('/auth/login');
+      }
+      return;
+    }
+
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -39,6 +52,35 @@ export default function ProfileScreen() {
         },
       },
     ]);
+  };
+
+  const handleSwitchAccount = async () => {
+    if (Platform.OS === 'web') {
+      const confirmed =
+        typeof window !== 'undefined'
+          ? window.confirm('Sign out and switch to another account?')
+          : true;
+      if (confirmed) {
+        await logout();
+        router.replace('/auth/login');
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Switch Account',
+      'Sign out and sign in with a different account?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Switch Account',
+          onPress: async () => {
+            await logout();
+            router.replace('/auth/login');
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -85,7 +127,7 @@ export default function ProfileScreen() {
           {user ? (
             <TouchableOpacity
               style={styles.switchAccountBtn}
-              onPress={() => router.push('/auth/login')}
+              onPress={handleSwitchAccount}
               activeOpacity={0.7}
             >
               <Ionicons name="log-in-outline" size={15} color={Palette.primary} />

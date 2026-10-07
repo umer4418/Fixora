@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,11 @@ import {
   TouchableOpacity,
   Alert,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Palette, Spacing, BorderRadius } from '../../constants/theme';
 import { useMarketplace } from '../../context/MarketplaceContext';
 import { useAuth } from '../../context/AuthContext';
@@ -19,7 +20,7 @@ import { Header } from '../../components/common/Header';
 import { BookingCard } from '../../components/marketplace/BookingCard';
 import { ReviewModal } from '../../components/marketplace/ReviewModal';
 
-type FilterTab = 'all' | 'pending' | 'active' | 'completed' | 'cancelled';
+type FilterTab = 'all' | 'placed' | 'processing' | 'completed' | 'cancelled';
 
 export default function BookingsScreen() {
   const { bookings, changeBookingStatus, refreshAll } = useMarketplace();
@@ -29,32 +30,69 @@ export default function BookingsScreen() {
   const [reviewBooking, setReviewBooking] = useState<Booking | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Auto-refresh when customer enters or switches to bookings tab
+  useFocusEffect(
+    useCallback(() => {
+      refreshAll();
+    }, [refreshAll])
+  );
+
   const onRefresh = async () => {
     setRefreshing(true);
-    await refreshAll();
+    await refreshAll(true);
     setRefreshing(false);
   };
 
   const userBookings = useMemo(() => {
-    // Show bookings for current user (or demo customer)
-    return bookings.filter(
-      (b) => b.customerId === user?.id || b.customerId === 'cust-demo'
+    if (!user) return [];
+    // 1. Primary match: by userId, customerId, or customerEmail
+    const matched = bookings.filter(
+      (b) =>
+        b.userId === user.id ||
+        b.customerId === user.id ||
+        (user.email && b.customerEmail && b.customerEmail.toLowerCase() === user.email.toLowerCase())
     );
-  }, [bookings, user?.id]);
+    if (matched.length > 0) return matched;
+
+    // 2. Fallback: if customer is logged in and bookings exist in their context, display them
+    if (user.role === 'customer' && bookings.length > 0) {
+      return bookings;
+    }
+
+    return [];
+  }, [bookings, user]);
 
   const filteredBookings = useMemo(() => {
     return userBookings.filter((b) => {
+      const orderStatus =
+        b.orderStatus ||
+        (b.status === 'pending'
+          ? 'Placed'
+          : b.status === 'completed'
+          ? 'Completed'
+          : b.status === 'cancelled'
+          ? 'Cancelled'
+          : 'Processing');
+
       if (activeTab === 'all') return true;
-      if (activeTab === 'pending') return b.status === 'pending';
-      if (activeTab === 'active')
-        return b.status === 'accepted' || b.status === 'on_the_way' || b.status === 'in_progress';
-      if (activeTab === 'completed') return b.status === 'completed';
-      if (activeTab === 'cancelled') return b.status === 'cancelled';
+      if (activeTab === 'placed') return orderStatus === 'Placed';
+      if (activeTab === 'processing') return orderStatus === 'Processing';
+      if (activeTab === 'completed') return orderStatus === 'Completed';
+      if (activeTab === 'cancelled') return orderStatus === 'Cancelled';
       return true;
     });
   }, [userBookings, activeTab]);
 
-  const handleCancel = (booking: Booking) => {
+  const handleCancel = async (booking: Booking) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      const confirmed = window.confirm(`Are you sure you want to cancel your booking for ${booking.serviceTitle}?`);
+      if (confirmed) {
+        await changeBookingStatus(booking.id, 'cancelled', 'Cancelled by customer');
+        alert('Booking has been cancelled.');
+      }
+      return;
+    }
+
     Alert.alert(
       'Cancel Booking',
       `Are you sure you want to cancel your booking for ${booking.serviceTitle}?`,
@@ -74,8 +112,8 @@ export default function BookingsScreen() {
 
   const tabs: { key: FilterTab; label: string }[] = [
     { key: 'all', label: 'All' },
-    { key: 'active', label: 'Active' },
-    { key: 'pending', label: 'Pending' },
+    { key: 'placed', label: 'Placed' },
+    { key: 'processing', label: 'Processing' },
     { key: 'completed', label: 'Completed' },
     { key: 'cancelled', label: 'Cancelled' },
   ];

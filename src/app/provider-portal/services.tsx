@@ -24,11 +24,14 @@ export default function ProviderServicesScreen() {
   const { user } = useAuth();
   const { services, categories, createService, editService, removeService } = useMarketplace();
 
-  const providerId = user?.id || 'prov-1';
-
   const myServices = useMemo(() => {
-    return services.filter((s) => s.providerId === providerId || s.providerId === 'prov-1');
-  }, [services, providerId]);
+    if (!user) return [];
+    return services.filter(
+      (s) =>
+        s.providerId === user.id ||
+        (user.role === 'provider' && (s.providerId === 'prov-1' || user.id === 'prov-1'))
+    );
+  }, [services, user]);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
@@ -83,11 +86,15 @@ export default function ProviderServicesScreen() {
       });
       alert('Service updated successfully.');
     } else {
+      if (!user) {
+        alert('You must be signed in as a provider to publish services.');
+        return;
+      }
       await createService({
-        providerId,
-        providerName: user?.name || 'David Miller',
-        providerAvatar: user?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
-        providerRating: 5.0,
+        providerId: user.id,
+        providerName: user.name || 'Service Provider',
+        providerAvatar: user.avatar,
+        providerRating: user.rating || 5.0,
         categoryId: cat.id,
         categoryName: cat.name,
         title: title.trim(),

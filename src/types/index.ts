@@ -40,6 +40,7 @@ export interface Service {
   categoryId: string;
   categoryName: string;
   title: string;
+  serviceName?: string;
   description: string;
   price: number;
   originalPrice?: number;
@@ -49,6 +50,7 @@ export interface Service {
   reviewsCount: number;
   isPopular?: boolean;
   isActive: boolean;
+  availability?: 'available' | 'busy' | 'offline' | string;
   features?: string[];
   createdAt: string;
 }
@@ -61,28 +63,52 @@ export type BookingStatus =
   | 'completed'
   | 'cancelled';
 
+export interface OrderItem {
+  id?: string;
+  serviceId: string;
+  title: string;
+  price: number;
+  quantity: number;
+  image?: string;
+}
+
 export interface Booking {
   id: string;
+  orderId?: string;
+  bookingId?: string;
+  userId?: string;
   customerId: string;
   customerName: string;
   customerPhone?: string;
+  customerContact?: string;
   customerEmail?: string;
   providerId: string;
   providerName: string;
+  providerEmail?: string;
   providerAvatar?: string;
   providerPhone?: string;
   serviceId: string;
   serviceTitle: string;
+  serviceName?: string;
   categoryName: string;
   serviceImage?: string;
+  items?: OrderItem[];
+  quantity?: number;
+  price?: number;
   totalPrice: number;
+  totalAmount?: number;
   date: string; // YYYY-MM-DD
+  bookingDate?: string;
   timeSlot: string; // e.g. "10:00 AM - 12:00 PM"
+  bookingTime?: string;
   address: Address;
   notes?: string;
   status: BookingStatus;
-  paymentStatus: 'unpaid' | 'paid';
-  paymentMethod: 'cash' | 'card' | 'wallet';
+  bookingStatus?: string;
+  orderStatus?: string; // e.g. "Pending Provider Acceptance" | "Accepted" | "In Progress" | "Completed" | "Cancelled" | "Rejected"
+  providerStatus?: 'Pending' | 'Accepted' | 'Rejected' | string;
+  paymentStatus: 'unpaid' | 'paid' | 'Pending' | 'Paid' | string;
+  paymentMethod: 'cash' | 'card' | 'wallet' | 'Cash on Delivery' | string;
   couponCode?: string;
   discountAmount?: number;
   createdAt: string;
@@ -93,18 +119,23 @@ export interface Booking {
 export interface ChatMessage {
   id: string;
   bookingId: string;
+  orderId?: string;
+  chatId?: string;
   senderId: string;
   senderName: string;
   senderRole: UserRole;
   recipientId: string;
   text: string;
+  message?: string;
   timestamp: string;
+  createdAt?: string;
   isRead: boolean;
+  read?: boolean;
 }
 
 export interface Review {
   id: string;
-  bookingId: string;
+  bookingId?: string;
   serviceId: string;
   serviceTitle?: string;
   providerId: string;

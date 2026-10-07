@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,14 +23,28 @@ export default function HomeScreen() {
   const { categories, services, providers, bookings, refreshAll } = useMarketplace();
   const [addressModalVisible, setAddressModalVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await refreshAll();
+    await refreshAll(true);
     setRefreshing(false);
   };
 
-  const popularServices = services.filter((s) => s.isPopular);
+  const displayedServices = useMemo(() => {
+    if (selectedCatId) {
+      return services.filter((s) => s.categoryId === selectedCatId);
+    }
+    const popular = services.filter((s) => s.isPopular);
+    return popular.length > 0 ? popular : services.slice(0, 10);
+  }, [services, selectedCatId]);
+
+  const newAndTrendingServices = useMemo(() => {
+    return [...services]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 10);
+  }, [services]);
+
   const activeBooking = bookings.find(
     (b) => b.status === 'in_progress' || b.status === 'accepted' || b.status === 'on_the_way'
   );
@@ -130,19 +144,109 @@ export default function HomeScreen() {
           ))}
         </ScrollView>
 
+        {/* New & Trending Services Section */}
+        {newAndTrendingServices.length > 0 && (
+          <View>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>New & Trending Services</Text>
+                <Text style={styles.sectionSubtitle}>Fresh additions & specialized home care</Text>
+              </View>
+              <TouchableOpacity onPress={() => router.push('/explore')}>
+                <Text style={styles.seeAllText}>Explore All</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.horizontalServicesScroll}
+            >
+              {newAndTrendingServices.map((service) => (
+                <ServiceCard key={service.id} service={service} horizontal />
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Popular Services Section */}
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.sectionTitle}>Popular Services</Text>
-            <Text style={styles.sectionSubtitle}>Most requested by customers this week</Text>
+            <Text style={styles.sectionTitle}>
+              {selectedCatId
+                ? categories.find((c) => c.id === selectedCatId)?.name || 'Services'
+                : 'Popular Services'}
+            </Text>
+            <Text style={styles.sectionSubtitle}>
+              {selectedCatId
+                ? `${displayedServices.length} verified services available`
+                : 'Most requested by customers this week'}
+            </Text>
           </View>
-          <TouchableOpacity onPress={() => router.push('/explore')}>
+          <TouchableOpacity
+            onPress={() =>
+              router.push(
+                selectedCatId
+                  ? { pathname: '/explore', params: { categoryId: selectedCatId } }
+                  : '/explore'
+              )
+            }
+          >
             <Text style={styles.seeAllText}>View All</Text>
           </TouchableOpacity>
         </View>
 
+        {/* Quick Category Filter Pills */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterPillsScroll}
+        >
+          <TouchableOpacity
+            style={[
+              styles.categoryPill,
+              selectedCatId === null && styles.categoryPillActive,
+            ]}
+            onPress={() => setSelectedCatId(null)}
+            activeOpacity={0.7}
+          >
+            <Text
+              style={[
+                styles.categoryPillText,
+                selectedCatId === null && styles.categoryPillTextActive,
+              ]}
+            >
+              All Popular
+            </Text>
+          </TouchableOpacity>
+
+          {categories.map((cat) => {
+            const isSelected = selectedCatId === cat.id;
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                style={[
+                  styles.categoryPill,
+                  isSelected && styles.categoryPillActive,
+                ]}
+                onPress={() => setSelectedCatId(isSelected ? null : cat.id)}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.categoryPillText,
+                    isSelected && styles.categoryPillTextActive,
+                  ]}
+                >
+                  {cat.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
         <View style={styles.servicesGrid}>
-          {popularServices.map((service) => (
+          {displayedServices.map((service) => (
             <ServiceCard key={service.id} service={service} />
           ))}
         </View>
@@ -360,6 +464,36 @@ const styles = StyleSheet.create({
   categoriesScroll: {
     paddingRight: Spacing.two,
     marginBottom: Spacing.three,
+  },
+  horizontalServicesScroll: {
+    paddingRight: Spacing.two,
+    marginBottom: Spacing.three,
+  },
+  filterPillsScroll: {
+    paddingRight: Spacing.two,
+    marginBottom: Spacing.three,
+    gap: 8,
+  },
+  categoryPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.gray200,
+  },
+  categoryPillActive: {
+    backgroundColor: Palette.primary,
+    borderColor: Palette.primary,
+  },
+  categoryPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Palette.gray600,
+  },
+  categoryPillTextActive: {
+    color: Palette.white,
+    fontWeight: '700',
   },
   servicesGrid: {
     marginBottom: Spacing.three,

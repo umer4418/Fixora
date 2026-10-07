@@ -19,16 +19,19 @@ export default function ProviderEarningsScreen() {
   const { user } = useAuth();
   const { bookings } = useMarketplace();
 
-  const providerId = user?.id || 'prov-1';
-
   const completedJobs = useMemo(() => {
+    if (!user) return [];
     return bookings.filter(
-      (b) => (b.providerId === providerId || b.providerId === 'prov-1') && b.status === 'completed'
+      (b) =>
+        (b.providerId === user.id ||
+          (user.role === 'provider' && (b.providerId === 'prov-1' || user.id === 'prov-1')) ||
+          user.role === 'provider') &&
+        b.status === 'completed'
     );
-  }, [bookings, providerId]);
+  }, [bookings, user]);
 
   const jobsRevenue = completedJobs.reduce((acc, curr) => acc + curr.totalPrice, 0);
-  const totalBalance = (user?.earnings || 3420) + jobsRevenue;
+  const totalBalance = (user?.earnings || 0) + jobsRevenue;
 
   const handleWithdraw = () => {
     Alert.alert(

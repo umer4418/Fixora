@@ -48,7 +48,9 @@ export const Header: React.FC<HeaderProps> = ({
               <Ionicons name="home" size={16} color={Palette.white} />
             </View>
             <Text style={styles.brandName}>Fixora</Text>
-            <Badge role={activeRole} style={{ marginLeft: 6 }} />
+            {activeRole && activeRole !== 'customer' && (
+              <Badge role={activeRole} style={{ marginLeft: 6 }} />
+            )}
           </View>
         )}
       </View>

@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { Palette, BorderRadius, Shadows, Spacing } from '../../constants/theme';
 import { Booking } from '../../types';
 import { Badge } from '../common/Badge';
+import { mapStatusToOrderDisplay } from '../../services/marketplaceService';
 
 interface BookingCardProps {
   booking: Booking;
@@ -31,9 +32,66 @@ export const BookingCard: React.FC<BookingCardProps> = ({
     });
   };
 
+  const orderNumber = booking.orderId
+    ? booking.orderId.startsWith('ord-')
+      ? `#${booking.orderId.replace('ord-', '').slice(-6).toUpperCase()}`
+      : `#${booking.orderId}`
+    : `#${booking.id.slice(-6).toUpperCase()}`;
+
+  const currentOrderStatus = booking.orderStatus || mapStatusToOrderDisplay(booking.status);
+  const displayTotal =
+    booking.totalAmount !== undefined ? booking.totalAmount : booking.totalPrice;
+  const paymentMethodLabel =
+    booking.paymentMethod === 'cod' || booking.paymentMethod === 'cash'
+      ? 'Cash on Delivery'
+      : booking.paymentMethod === 'card'
+      ? 'Credit Card'
+      : booking.paymentMethod
+      ? booking.paymentMethod.toUpperCase()
+      : 'Cash on Delivery';
+
+  const paymentStatusLabel = booking.paymentStatus
+    ? booking.paymentStatus.charAt(0).toUpperCase() + booking.paymentStatus.slice(1)
+    : 'Pending';
+
+  const isCancelled =
+    currentOrderStatus === 'Cancelled' ||
+    currentOrderStatus === 'Rejected' ||
+    booking.providerStatus === 'Rejected' ||
+    booking.status === 'cancelled';
+
+  const isProviderAccepted =
+    booking.providerStatus === 'Accepted' ||
+    booking.status === 'accepted' ||
+    booking.status === 'on_the_way' ||
+    booking.status === 'in_progress' ||
+    booking.status === 'completed';
+
+  const isPendingProvider =
+    booking.providerStatus === 'Pending' ||
+    currentOrderStatus === 'Pending Provider Acceptance' ||
+    booking.status === 'pending';
+
+  const isProcessing =
+    currentOrderStatus === 'Processing' ||
+    booking.status === 'on_the_way' ||
+    booking.status === 'in_progress';
+
+  const isCompleted = currentOrderStatus === 'Completed' || booking.status === 'completed';
+
   return (
     <View style={styles.card}>
-      <TouchableOpacity onPress={handleOpenDetail} activeOpacity={0.8}>
+      <TouchableOpacity onPress={handleOpenDetail} activeOpacity={0.85}>
+        {/* Header: Order ID + Status Badge */}
+        <View style={styles.cardTopBar}>
+          <View style={styles.orderIdContainer}>
+            <Text style={styles.orderIdLabel}>Order {orderNumber}</Text>
+            <Text style={styles.categoryName}>{booking.categoryName || 'Service'}</Text>
+          </View>
+          <Badge status={booking.status} />
+        </View>
+
+        {/* Service Info Row */}
         <View style={styles.headerRow}>
           <View style={styles.serviceImageContainer}>
             {booking.serviceImage ? (
@@ -46,46 +104,146 @@ export const BookingCard: React.FC<BookingCardProps> = ({
           </View>
 
           <View style={styles.headerInfo}>
-            <View style={styles.statusRow}>
-              <Text style={styles.categoryName}>{booking.categoryName}</Text>
-              <Badge status={booking.status} />
-            </View>
-            <Text style={styles.serviceTitle} numberOfLines={1}>
+            <Text style={styles.serviceTitle} numberOfLines={2}>
               {booking.serviceTitle}
             </Text>
-            <Text style={styles.bookingId}>Booking #{booking.id.slice(-6).toUpperCase()}</Text>
+            {booking.providerName ? (
+              <Text style={styles.providerNameText} numberOfLines={1}>
+                Provider: {booking.providerName}
+              </Text>
+            ) : null}
           </View>
         </View>
 
         <View style={styles.divider} />
 
+        {/* Visual Stepper / Status Progress */}
+        {isCancelled ? (
+          <View style={styles.cancelledBanner}>
+            <Ionicons name="alert-circle" size={16} color={Palette.danger} />
+            <Text style={styles.cancelledBannerText}>
+              Status: {booking.providerStatus === 'Rejected' ? 'Declined by Provider' : 'Cancelled'}
+              {booking.cancellationReason ? ` (${booking.cancellationReason})` : ''}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.stepperContainer}>
+            <View style={styles.stepperHeaderRow}>
+              <Text style={styles.stepperTitle}>
+                Status: <Text style={styles.stepperTitleBold}>{currentOrderStatus}</Text>
+              </Text>
+              {isPendingProvider && (
+                <View style={styles.pendingProviderPill}>
+                  <Text style={styles.pendingProviderText}>Awaiting Provider</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.stepperRow}>
+              {/* Step 1: Placed */}
+              <View style={styles.stepItem}>
+                <Ionicons name="checkmark-circle" size={14} color={Palette.accent} />
+                <Text style={styles.stepTextActive}>Placed: ✓</Text>
+              </View>
+
+              <View style={[styles.stepLine, isProviderAccepted && styles.stepLineActive]} />
+
+              {/* Step 2: Provider Acceptance */}
+              <View style={styles.stepItem}>
+                <Ionicons
+                  name={isProviderAccepted ? 'checkmark-circle' : isPendingProvider ? 'time' : 'ellipse-outline'}
+                  size={14}
+                  color={isProviderAccepted ? Palette.accent : isPendingProvider ? Palette.primary : Palette.gray400}
+                />
+                <Text
+                  style={
+                    isProviderAccepted
+                      ? styles.stepTextActive
+                      : isPendingProvider
+                      ? [styles.stepTextActive, { color: Palette.primary }]
+                      : styles.stepTextInactive
+                  }
+                >
+                  {isProviderAccepted ? 'Accepted: ✓' : 'Provider: ⏳'}
+                </Text>
+              </View>
+
+              <View style={[styles.stepLine, (isProcessing || isCompleted) && styles.stepLineActive]} />
+
+              {/* Step 3: In Progress */}
+              <View style={styles.stepItem}>
+                <Ionicons
+                  name={isProcessing || isCompleted ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={14}
+                  color={isProcessing || isCompleted ? Palette.accent : Palette.gray400}
+                />
+                <Text
+                  style={
+                    isProcessing || isCompleted ? styles.stepTextActive : styles.stepTextInactive
+                  }
+                >
+                  Active: {isProcessing || isCompleted ? '✓' : '○'}
+                </Text>
+              </View>
+
+              <View style={[styles.stepLine, isCompleted && styles.stepLineActive]} />
+
+              {/* Step 4: Completed */}
+              <View style={styles.stepItem}>
+                <Ionicons
+                  name={isCompleted ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={14}
+                  color={isCompleted ? Palette.accent : Palette.gray400}
+                />
+                <Text style={isCompleted ? styles.stepTextActive : styles.stepTextInactive}>
+                  Done: {isCompleted ? '✓' : '○'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Order Details Grid */}
         <View style={styles.detailsBlock}>
           <View style={styles.detailRow}>
             <Ionicons name="calendar-outline" size={14} color={Palette.primary} />
             <Text style={styles.detailText}>
-              {booking.date} • {booking.timeSlot}
+              Date: {booking.date} • {booking.timeSlot}
             </Text>
           </View>
 
-          <View style={styles.detailRow}>
-            <Ionicons name="person-outline" size={14} color={Palette.gray500} />
-            <Text style={styles.detailText}>Provider: {booking.providerName}</Text>
-          </View>
+          {booking.address ? (
+            <View style={styles.detailRow}>
+              <Ionicons name="location-outline" size={14} color={Palette.gray500} />
+              <Text style={styles.detailText} numberOfLines={1}>
+                {booking.address.street}, {booking.address.city}
+              </Text>
+            </View>
+          ) : null}
 
-          <View style={styles.detailRow}>
-            <Ionicons name="location-outline" size={14} color={Palette.gray500} />
-            <Text style={styles.detailText} numberOfLines={1}>
-              {booking.address.street}, {booking.address.city}
-            </Text>
+          <View style={styles.paymentMetaRow}>
+            <View style={styles.paymentMetaItem}>
+              <Ionicons name="cash-outline" size={13} color={Palette.gray600} />
+              <Text style={styles.paymentMetaText}>
+                Payment: <Text style={styles.paymentMetaBold}>{paymentMethodLabel}</Text>
+              </Text>
+            </View>
+            <View style={styles.paymentMetaBadge}>
+              <Text style={styles.paymentMetaBadgeText}>
+                {paymentStatusLabel}
+              </Text>
+            </View>
           </View>
         </View>
 
+        {/* Pricing Summary */}
         <View style={styles.priceRow}>
           <Text style={styles.priceLabel}>Total Amount</Text>
-          <Text style={styles.priceValue}>${booking.totalPrice}</Text>
+          <Text style={styles.priceValue}>${displayTotal}</Text>
         </View>
       </TouchableOpacity>
 
+      {/* Action Buttons */}
       <View style={styles.actionsRow}>
         <TouchableOpacity
           style={styles.chatButton}
@@ -102,7 +260,7 @@ export const BookingCard: React.FC<BookingCardProps> = ({
           activeOpacity={0.7}
         >
           <Ionicons name="navigate-outline" size={16} color={Palette.white} />
-          <Text style={styles.trackButtonText}>Track Status</Text>
+          <Text style={styles.trackButtonText}>View Order</Text>
         </TouchableOpacity>
 
         {booking.status === 'completed' && onReviewPress && (
@@ -140,14 +298,40 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.three,
     ...Shadows.sm,
   },
+  cardTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.two,
+  },
+  orderIdContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  orderIdLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Palette.gray900,
+  },
+  categoryName: {
+    fontSize: 10,
+    color: Palette.primary,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    backgroundColor: Palette.primarySoft,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
   },
   serviceImageContainer: {
-    width: 60,
-    height: 60,
+    width: 54,
+    height: 54,
     borderRadius: BorderRadius.md,
     overflow: 'hidden',
     backgroundColor: Palette.gray100,
@@ -166,32 +350,99 @@ const styles = StyleSheet.create({
   headerInfo: {
     flex: 1,
   },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  categoryName: {
-    fontSize: 11,
-    color: Palette.primary,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
   serviceTitle: {
     fontSize: 15,
     fontWeight: '700',
     color: Palette.gray900,
-    marginBottom: 2,
+    marginBottom: 3,
   },
-  bookingId: {
-    fontSize: 11,
-    color: Palette.gray400,
+  providerNameText: {
+    fontSize: 12,
+    color: Palette.gray500,
   },
   divider: {
     height: 1,
     backgroundColor: Palette.gray100,
     marginVertical: Spacing.two,
+  },
+  stepperContainer: {
+    backgroundColor: Palette.gray50,
+    borderRadius: BorderRadius.md,
+    padding: 10,
+    marginBottom: Spacing.two,
+    borderWidth: 1,
+    borderColor: Palette.gray200,
+  },
+  stepperHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  stepperTitle: {
+    fontSize: 11,
+    color: Palette.gray600,
+  },
+  stepperTitleBold: {
+    fontWeight: '700',
+    color: Palette.primary,
+  },
+  pendingProviderPill: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  pendingProviderText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: Palette.primary,
+  },
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  stepItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  stepTextActive: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Palette.accent,
+  },
+  stepTextInactive: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: Palette.gray400,
+  },
+  stepLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: Palette.gray200,
+    marginHorizontal: 4,
+  },
+  stepLineActive: {
+    backgroundColor: Palette.accent,
+  },
+  cancelledBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Palette.dangerSoft,
+    padding: 10,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.two,
+  },
+  cancelledBannerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Palette.danger,
+    flex: 1,
   },
   detailsBlock: {
     gap: 6,
@@ -206,6 +457,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Palette.gray600,
     flex: 1,
+  },
+  paymentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  paymentMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  paymentMetaText: {
+    fontSize: 12,
+    color: Palette.gray600,
+  },
+  paymentMetaBold: {
+    fontWeight: '700',
+    color: Palette.gray800,
+  },
+  paymentMetaBadge: {
+    backgroundColor: Palette.gray100,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
+  paymentMetaBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Palette.gray700,
   },
   priceRow: {
     flexDirection: 'row',

@@ -65,7 +65,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({ service, horizontal = 
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.title} numberOfLines={2}>
+          <Text style={styles.horizontalTitle} numberOfLines={2}>
             {service.title}
           </Text>
 
@@ -308,11 +308,13 @@ const styles = StyleSheet.create({
     borderColor: Palette.gray200,
     overflow: 'hidden',
     marginBottom: Spacing.two,
-    height: 120,
+    marginRight: Spacing.three,
+    width: 290,
+    height: 134,
     ...Shadows.sm,
   },
   horizontalImage: {
-    width: 110,
+    width: 105,
     height: '100%',
     resizeMode: 'cover',
   },
@@ -320,6 +322,13 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 10,
     justifyContent: 'space-between',
+  },
+  horizontalTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Palette.gray900,
+    lineHeight: 18,
+    marginVertical: 2,
   },
   topRow: {
     flexDirection: 'row',

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -6,19 +6,30 @@ import {
   ScrollView,
   Image,
   TouchableOpacity,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 import { useMarketplace } from '../../context/MarketplaceContext';
+import { useAuth } from '../../context/AuthContext';
 import { StarRating } from '../../components/common/StarRating';
 import { ServiceCard } from '../../components/marketplace/ServiceCard';
 import { Button } from '../../components/common/Button';
 
 export default function ProviderProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { providers, services, reviews } = useMarketplace();
+  const { providers, services, reviews, createReview } = useMarketplace();
+  const { user } = useAuth();
+
+  const [writeReviewVisible, setWriteReviewVisible] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
   const provider = useMemo(() => {
     return providers.find((p) => p.id === id);
@@ -31,6 +42,36 @@ export default function ProviderProfileScreen() {
   const providerReviews = useMemo(() => {
     return reviews.filter((r) => r.providerId === id);
   }, [reviews, id]);
+
+  const handleSubmitReview = async () => {
+    if (!reviewComment.trim()) {
+      alert('Please enter your review feedback');
+      return;
+    }
+    if (!provider) return;
+
+    setIsSubmittingReview(true);
+    try {
+      await createReview({
+        serviceId: providerServices[0]?.id || `prov-${provider.id}`,
+        serviceTitle: providerServices[0]?.title || `${provider.name}'s Service`,
+        providerId: provider.id,
+        customerId: user?.id || 'cust-demo',
+        customerName: user?.name || 'Customer',
+        customerAvatar: user?.avatar,
+        rating: reviewRating,
+        comment: reviewComment.trim(),
+      });
+      setWriteReviewVisible(false);
+      setReviewComment('');
+      setReviewRating(5);
+      alert('Thank you! Your review has been submitted.');
+    } catch (e: any) {
+      alert(e?.message || 'Failed to submit review');
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  };
 
   if (!provider) {
     return (
@@ -137,8 +178,16 @@ export default function ProviderProfileScreen() {
         ))}
 
         {/* Customer Reviews for Provider */}
-        <View style={styles.sectionHeader}>
+        <View style={styles.sectionHeaderBetween}>
           <Text style={styles.sectionTitle}>Reviews ({providerReviews.length})</Text>
+          <TouchableOpacity
+            style={styles.addReviewBtn}
+            onPress={() => setWriteReviewVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="create-outline" size={14} color={Palette.primary} />
+            <Text style={styles.addReviewBtnText}>Write a Review</Text>
+          </TouchableOpacity>
         </View>
 
         {providerReviews.length === 0 ? (
@@ -160,6 +209,75 @@ export default function ProviderProfileScreen() {
           ))
         )}
       </ScrollView>
+
+      {/* Write Review Modal */}
+      <Modal
+        visible={writeReviewVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setWriteReviewVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setWriteReviewVisible(false)}
+          />
+          <View style={styles.reviewModalCard}>
+            <View style={styles.reviewModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="star" size={18} color={Palette.star} />
+                <Text style={styles.reviewModalTitle}>Rate & Review {provider.name}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setWriteReviewVisible(false)}>
+                <Ionicons name="close" size={20} color={Palette.gray500} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.reviewRatingBox}>
+              <Text style={styles.reviewRatePrompt}>How was your experience?</Text>
+              <StarRating
+                rating={reviewRating}
+                size={26}
+                interactive
+                onRatingChange={(r) => setReviewRating(r)}
+              />
+              <Text style={styles.reviewRatingScore}>{reviewRating} of 5 Stars</Text>
+            </View>
+
+            <Text style={styles.reviewInputLabel}>Your Review</Text>
+            <TextInput
+              style={styles.reviewTextInput}
+              placeholder="Tell others about timeliness, communication, and quality..."
+              placeholderTextColor={Palette.gray400}
+              multiline
+              numberOfLines={4}
+              value={reviewComment}
+              onChangeText={setReviewComment}
+            />
+
+            <View style={styles.reviewActionsRow}>
+              <Button
+                title="Cancel"
+                variant="outline"
+                onPress={() => setWriteReviewVisible(false)}
+                style={{ flex: 1, marginRight: 8 }}
+                size="sm"
+              />
+              <Button
+                title="Submit Review"
+                onPress={handleSubmitReview}
+                loading={isSubmittingReview}
+                style={{ flex: 1.5 }}
+                size="sm"
+              />
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -176,6 +294,9 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: Spacing.four,
     paddingBottom: Spacing.six,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   navBar: {
     flexDirection: 'row',
@@ -355,5 +476,102 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Palette.gray800,
     marginTop: 8,
+  },
+  sectionHeaderBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.three,
+    marginTop: Spacing.two,
+  },
+  addReviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Palette.primarySoft,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: BorderRadius.full,
+  },
+  addReviewBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Palette.primary,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.four,
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  reviewModalCard: {
+    backgroundColor: Palette.white,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.four,
+    width: '100%',
+    maxWidth: 480,
+    ...Shadows.lg,
+  },
+  reviewModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.three,
+  },
+  reviewModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Palette.gray900,
+  },
+  reviewRatingBox: {
+    alignItems: 'center',
+    backgroundColor: Palette.gray50,
+    padding: Spacing.three,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Palette.gray200,
+    marginBottom: Spacing.three,
+  },
+  reviewRatePrompt: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Palette.gray700,
+    marginBottom: 6,
+  },
+  reviewRatingScore: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Palette.gray500,
+    marginTop: 4,
+  },
+  reviewInputLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Palette.gray700,
+    marginBottom: 6,
+  },
+  reviewTextInput: {
+    borderWidth: 1,
+    borderColor: Palette.gray300,
+    borderRadius: BorderRadius.md,
+    padding: 10,
+    fontSize: 13,
+    color: Palette.gray800,
+    minHeight: 80,
+    textAlignVertical: 'top',
+    backgroundColor: Palette.gray50,
+    marginBottom: Spacing.three,
+  },
+  reviewActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
 });
