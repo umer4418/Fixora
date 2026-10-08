@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Category,
   Service,
@@ -30,6 +30,8 @@ interface MarketplaceContextType {
   coupons: Coupon[];
   selectedAddress: Address | null;
   unreadNotificationsCount: number;
+  unreadChatCount: number;
+  getBookingUnreadChatCount: (bookingId: string) => number;
   isLoading: boolean;
   refreshAll: (force?: boolean) => Promise<void>;
   
@@ -37,6 +39,14 @@ interface MarketplaceContextType {
   bookService: (data: Omit<Booking, 'id' | 'createdAt' | 'updatedAt' | 'status'>) => Promise<Booking>;
   changeBookingStatus: (bookingId: string, status: BookingStatus, reason?: string) => Promise<void>;
   respondToOrder: (bookingId: string, action: 'accept' | 'reject', reason?: string) => Promise<void>;
+  payBookingWithStripe: (
+    bookingId: string,
+    stripeDetails: {
+      stripePaymentId: string;
+      stripeChargeId?: string;
+      stripeReceiptUrl?: string;
+    }
+  ) => Promise<boolean>;
   
   // Reviews
   createReview: (data: Omit<Review, 'id' | 'createdAt'>) => Promise<Review>;
@@ -80,9 +90,10 @@ const MarketplaceContext = createContext<MarketplaceContextType | undefined>(und
 // Concurrency control: prevent burst requests when screens mount or focus simultaneously
 let activeRefreshPromise: Promise<void> | null = null;
 let lastRefreshTime = 0;
+let lastUserKey = '';
 
 export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, activeRole } = useAuth();
   const [categories, setCategories] = useState<Category[]>(INITIAL_CATEGORIES);
   const [services, setServices] = useState<Service[]>(INITIAL_SERVICES);
   const [providers, setProviders] = useState<User[]>(INITIAL_PROVIDERS);
@@ -111,15 +122,20 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
       return activeRefreshPromise;
     }
 
-    // 2. Throttle calls within 6 seconds unless user explicitly requested a forced refresh (e.g., pull-to-refresh)
-    if (!force && now - lastRefreshTime < 6000) {
+    const effectiveRole = activeRole || user?.role || 'customer';
+    const effectiveUserId = user?.id || (effectiveRole === 'provider' ? 'prov-1' : 'cust-demo');
+    const userRoleKey = `${effectiveUserId}_${effectiveRole}`;
+
+    // 2. Throttle calls within 2 seconds for the same user and role unless explicitly forced
+    if (!force && lastUserKey === userRoleKey && now - lastRefreshTime < 2000) {
       return;
     }
 
+    lastUserKey = userRoleKey;
     lastRefreshTime = now;
     activeRefreshPromise = (async () => {
       try {
-        if (!user) {
+        if (!user && !activeRole) {
           clearUserState();
           const [cats, srvs, provs, revs, cpns] = await Promise.all([
             ServiceAPI.getCategories(),
@@ -140,11 +156,11 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
           ServiceAPI.getCategories(),
           ServiceAPI.getServices(),
           ServiceAPI.getProviders(),
-          ServiceAPI.getBookings(user.id, user.role),
+          ServiceAPI.getBookings(effectiveUserId, effectiveRole),
           ServiceAPI.getReviews(),
-          ServiceAPI.getNotifications(user.id),
-          ServiceAPI.getAddresses(user.id),
-          ServiceAPI.getFavorites(user.id),
+          ServiceAPI.getNotifications(effectiveUserId),
+          ServiceAPI.getAddresses(effectiveUserId),
+          ServiceAPI.getFavorites(effectiveUserId),
           ServiceAPI.getCoupons(),
         ]);
 
@@ -168,7 +184,7 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
 
     return activeRefreshPromise;
-  }, [user, clearUserState]);
+  }, [user, activeRole, clearUserState]);
 
   useEffect(() => {
     let isMounted = true;
@@ -192,11 +208,14 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
       }
 
+      const effectiveRole = activeRole || user?.role || 'customer';
+      const effectiveUserId = user?.id || (effectiveRole === 'provider' ? 'prov-1' : 'cust-demo');
+
       if (user && isMounted) {
         // Attach live real-time synchronization listener for orders & bookings
         unsubOrders = ServiceAPI.subscribeToOrders(
-          user.id,
-          user.role,
+          effectiveUserId,
+          effectiveRole,
           (liveOrders) => {
             if (isMounted) {
               setBookings(liveOrders);
@@ -209,10 +228,18 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         // Attach live real-time synchronization listener for notifications
         unsubNotifs = ServiceAPI.subscribeToNotifications(
-          user.id,
+          effectiveUserId,
           (liveNotifs) => {
             if (isMounted) {
-              setNotifications(liveNotifs);
+              setNotifications((prev) => {
+                if (prev.length === liveNotifs.length) {
+                  const unchanged = liveNotifs.every(
+                    (n, i) => n.id === prev[i]?.id && n.read === prev[i]?.read
+                  );
+                  if (unchanged) return prev;
+                }
+                return liveNotifs;
+              });
             }
           },
           (err) => {
@@ -233,8 +260,48 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
       window.addEventListener('storage', storageListener);
     }
 
+    // Periodic background sync for notifications & bookings (every 4 seconds) to ensure cross-tab & real-time updates
+    const syncPollInterval = setInterval(async () => {
+      const effRole = activeRole || user?.role || 'customer';
+      const effUserId = user?.id || (effRole === 'provider' ? 'prov-1' : 'cust-demo');
+      if (!isMounted || !effUserId) return;
+      try {
+        const [latestNotifs, latestBookings] = await Promise.all([
+          ServiceAPI.getNotifications(effUserId),
+          ServiceAPI.getBookings(effUserId, effRole),
+        ]);
+        if (isMounted && latestNotifs) {
+          setNotifications((prev) => {
+            if (prev.length === latestNotifs.length) {
+              const unchanged = latestNotifs.every(
+                (n, i) => n.id === prev[i]?.id && n.read === prev[i]?.read && n.message === prev[i]?.message
+              );
+              if (unchanged) return prev;
+            }
+            return latestNotifs;
+          });
+        }
+        if (isMounted && latestBookings) {
+          setBookings((prev) => {
+            if (prev.length === latestBookings.length) {
+              const unchanged = latestBookings.every(
+                (b, i) => b.id === prev[i]?.id && b.status === prev[i]?.status && b.updatedAt === prev[i]?.updatedAt
+              );
+              if (unchanged) return prev;
+            }
+            return latestBookings;
+          });
+        }
+      } catch {
+        // ignore
+      }
+    }, 4000);
+
     return () => {
       isMounted = false;
+      if (syncPollInterval) {
+        clearInterval(syncPollInterval);
+      }
       if (unsubOrders) {
         unsubOrders();
       }
@@ -245,9 +312,26 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         window.removeEventListener('storage', storageListener);
       }
     };
-  }, [user, clearUserState, refreshAll]);
+  }, [user, activeRole, clearUserState, refreshAll]);
 
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
+
+  const unreadChatCount = useMemo(() => {
+    return notifications.filter((n) => n.type === 'chat' && !n.read).length;
+  }, [notifications]);
+
+  const getBookingUnreadChatCount = useCallback(
+    (bookingId: string) => {
+      if (!bookingId) return 0;
+      return notifications.filter(
+        (n) =>
+          n.type === 'chat' &&
+          !n.read &&
+          n.bookingId === bookingId
+      ).length;
+    },
+    [notifications]
+  );
 
   const bookService = async (
     data: Omit<Booking, 'id' | 'createdAt' | 'updatedAt' | 'status'>
@@ -332,6 +416,45 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setNotifications(notifs);
       }
     }
+  };
+
+  const payBookingWithStripe = async (
+    bookingId: string,
+    stripeDetails: {
+      stripePaymentId: string;
+      stripeChargeId?: string;
+      stripeReceiptUrl?: string;
+    }
+  ): Promise<boolean> => {
+    const updated = await ServiceAPI.updateBookingPayment(
+      bookingId,
+      {
+        paymentStatus: 'paid',
+        paymentMethod: 'card',
+        stripePaymentId: stripeDetails.stripePaymentId,
+        stripeChargeId: stripeDetails.stripeChargeId,
+        stripeReceiptUrl: stripeDetails.stripeReceiptUrl,
+      },
+      user?.id
+    );
+    if (updated) {
+      setBookings((prev) =>
+        prev.map((b) =>
+          b.id === bookingId ||
+          b.orderId === bookingId ||
+          (updated.orderId && b.id === updated.orderId)
+            ? updated
+            : b
+        )
+      );
+      if (user?.id) {
+        ServiceAPI.getNotifications(user.id)
+          .then((notifs) => setNotifications(notifs))
+          .catch(() => {});
+      }
+      return true;
+    }
+    return false;
   };
 
   const createReview = async (
@@ -491,12 +614,15 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         coupons,
         selectedAddress,
         unreadNotificationsCount,
+        unreadChatCount,
+        getBookingUnreadChatCount,
         isLoading,
         refreshAll,
         clearUserState,
         bookService,
         changeBookingStatus,
         respondToOrder,
+        payBookingWithStripe,
         createReview,
         removeReview,
         toggleFavorite,

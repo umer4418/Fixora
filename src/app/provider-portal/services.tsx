@@ -124,14 +124,34 @@ export default function ProviderServicesScreen() {
     ]);
   };
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/provider-portal');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <View style={styles.navBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity
+          onPress={handleBack}
+          style={styles.navBtn}
+          hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+          accessibilityRole="button"
+          accessibilityLabel="Back to Provider Portal"
+        >
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <Text style={styles.navTitle}>My Services</Text>
-        <TouchableOpacity onPress={openCreateModal} style={styles.addBtn}>
+        <TouchableOpacity
+          onPress={openCreateModal}
+          style={styles.addBtn}
+          hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+          accessibilityRole="button"
+          accessibilityLabel="Add New Service"
+        >
           <Ionicons name="add" size={24} color={Palette.primary} />
         </TouchableOpacity>
       </View>

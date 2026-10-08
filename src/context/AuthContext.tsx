@@ -412,13 +412,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setActiveRole(newRole);
     await AsyncStorage.setItem(ACTIVE_ROLE_KEY, newRole);
 
-    if (newRole === 'admin') {
-      setUser(DEMO_USERS.admin);
-    } else if (newRole === 'provider') {
-      setUser(DEMO_USERS.provider);
-    } else {
-      setUser(DEMO_USERS.customer);
-    }
+    const targetUser =
+      newRole === 'admin'
+        ? DEMO_USERS.admin
+        : newRole === 'provider'
+        ? DEMO_USERS.provider
+        : DEMO_USERS.customer;
+
+    setUser(targetUser);
+    await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(targetUser));
   };
 
   const loginAsDemoUser = async (demoRole: UserRole) => {

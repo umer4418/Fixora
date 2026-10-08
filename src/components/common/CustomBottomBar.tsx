@@ -25,7 +25,9 @@ export const CustomBottomBar: React.FC<CustomBottomBarProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { bookings } = useMarketplace();
+  const { bookings, notifications } = useMarketplace();
+
+  const unreadChatCount = notifications.filter((n) => n.type === 'chat' && !n.read).length;
 
   const activeBookingsCount = bookings.filter(
     (b) =>
@@ -173,10 +175,16 @@ export const CustomBottomBar: React.FC<CustomBottomBarProps> = ({
                 color="#FFFFFF"
               />
               <Text style={styles.fabLabel}>Booking</Text>
-              {activeBookingsCount > 0 && (
-                <View style={styles.fabBadge}>
+              {(unreadChatCount > 0 || activeBookingsCount > 0) && (
+                <View style={[styles.fabBadge, unreadChatCount > 0 && styles.fabBadgeChat]}>
                   <Text style={styles.fabBadgeText}>
-                    {activeBookingsCount > 9 ? '9+' : activeBookingsCount}
+                    {unreadChatCount > 0
+                      ? unreadChatCount > 9
+                        ? '9+'
+                        : unreadChatCount
+                      : activeBookingsCount > 9
+                      ? '9+'
+                      : activeBookingsCount}
                   </Text>
                 </View>
               )}
@@ -344,6 +352,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  fabBadgeChat: {
+    backgroundColor: '#DC2626',
+    borderWidth: 2,
     borderColor: '#FFFFFF',
   },
   fabBadgeText: {

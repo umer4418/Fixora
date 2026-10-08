@@ -1027,29 +1027,43 @@ export default function AdminDashboardScreen() {
                         ) : null}
                       </View>
 
-                      {/* Order Action Buttons: Full Details Modal + Live Chat */}
+                      {/* Order Action Buttons: Full Details Modal + Separate Customer & Provider Live Chat */}
                       <View style={styles.adminOrderActionRow}>
                         <TouchableOpacity
                           style={styles.adminViewDetailsBtn}
                           onPress={() => setSelectedOrderForModal(b)}
                           activeOpacity={0.8}
                         >
-                          <Ionicons name="document-text-outline" size={15} color={Palette.primary} />
-                          <Text style={styles.adminViewDetailsBtnText}>View Full Details</Text>
+                          <Ionicons name="document-text-outline" size={14} color={Palette.primary} />
+                          <Text style={styles.adminViewDetailsBtnText}>Details</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                          style={styles.adminChatOrderBtn}
+                          style={styles.adminChatCustomerBtn}
                           onPress={() =>
                             router.push({
                               pathname: '/chat/[id]',
-                              params: { id: b.id },
+                              params: { id: b.id, target: 'customer' },
                             })
                           }
                           activeOpacity={0.8}
                         >
-                          <Ionicons name="chatbubbles-outline" size={15} color={Palette.purple} />
-                          <Text style={styles.adminChatOrderBtnText}>Open Chat</Text>
+                          <Ionicons name="person-outline" size={13} color={Palette.primary} />
+                          <Text style={styles.adminChatCustomerBtnText}>Chat Customer</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={styles.adminChatProviderBtn}
+                          onPress={() =>
+                            router.push({
+                              pathname: '/chat/[id]',
+                              params: { id: b.id, target: 'provider' },
+                            })
+                          }
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="construct-outline" size={13} color={Palette.purple} />
+                          <Text style={styles.adminChatProviderBtnText}>Chat Provider</Text>
                         </TouchableOpacity>
                       </View>
 
@@ -1694,19 +1708,38 @@ export default function AdminDashboardScreen() {
                   </View>
                 </View>
 
-                {/* Live Chat Launcher Button */}
-                <TouchableOpacity
-                  style={styles.modalLaunchChatBtn}
-                  onPress={() => {
-                    const id = selectedOrderForModal.id;
-                    setSelectedOrderForModal(null);
-                    router.push({ pathname: '/chat/[id]', params: { id } });
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="chatbubbles" size={18} color={Palette.white} />
-                  <Text style={styles.modalLaunchChatBtnText}>Open Order Live Chat</Text>
-                </TouchableOpacity>
+                {/* Live Chat Launcher Buttons - Customer vs Provider Separate */}
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+                  <TouchableOpacity
+                    style={[styles.modalLaunchChatBtn, { flex: 1, backgroundColor: Palette.primary, marginTop: 0 }]}
+                    onPress={() => {
+                      const id = selectedOrderForModal.id;
+                      setSelectedOrderForModal(null);
+                      router.push({ pathname: '/chat/[id]', params: { id, target: 'customer' } });
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="person" size={15} color={Palette.white} />
+                    <Text style={styles.modalLaunchChatBtnText} numberOfLines={1}>
+                      Chat Customer
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.modalLaunchChatBtn, { flex: 1, backgroundColor: Palette.purple, marginTop: 0 }]}
+                    onPress={() => {
+                      const id = selectedOrderForModal.id;
+                      setSelectedOrderForModal(null);
+                      router.push({ pathname: '/chat/[id]', params: { id, target: 'provider' } });
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="construct" size={15} color={Palette.white} />
+                    <Text style={styles.modalLaunchChatBtnText} numberOfLines={1}>
+                      Chat Provider
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
                 {/* Status Updater Buttons in Modal */}
                 <View style={{ marginTop: 14 }}>
@@ -2880,6 +2913,42 @@ const styles = StyleSheet.create({
   },
   adminChatOrderBtnText: {
     fontSize: 12,
+    fontWeight: '700',
+    color: Palette.purple,
+  },
+  adminChatCustomerBtn: {
+    flex: 1.1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    backgroundColor: Palette.primarySoft,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  adminChatCustomerBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Palette.primary,
+  },
+  adminChatProviderBtn: {
+    flex: 1.1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    backgroundColor: '#F3E8FF',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+  },
+  adminChatProviderBtnText: {
+    fontSize: 11,
     fontWeight: '700',
     color: Palette.purple,
   },

@@ -13,9 +13,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from '../../components/common/Button';
 import { AddressSelectorModal } from '../../components/marketplace/AddressSelectorModal';
+import { StripePaymentModal } from '../../components/payment/StripePaymentModal';
 import { BorderRadius, Palette, Shadows, Spacing } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
 import { useMarketplace } from '../../context/MarketplaceContext';
+import { StripePaymentResult } from '../../services/stripeService';
 
 export default function BookServiceScreen() {
   const { serviceId } = useLocalSearchParams<{ serviceId: string }>();
@@ -59,6 +61,7 @@ export default function BookServiceScreen() {
   const [notes, setNotes] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'wallet'>('cash');
   const [addressModalVisible, setAddressModalVisible] = useState(false);
+  const [stripeModalVisible, setStripeModalVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Coupon state
@@ -128,16 +131,26 @@ export default function BookServiceScreen() {
       return;
     }
 
+    if (paymentMethod === 'card') {
+      setStripeModalVisible(true);
+      return;
+    }
+
+    await executeBookingCreation();
+  };
+
+  const executeBookingCreation = async (stripeRes?: StripePaymentResult) => {
     setIsSubmitting(true);
     try {
-      const finalContactPhone = contactPhone.trim() || user.phone || '';
+      const finalContactPhone = contactPhone.trim() || user?.phone || '';
+      const isPaid = !!stripeRes && stripeRes.success;
       const created = await bookService({
-        userId: user.id,
-        customerId: user.id,
-        customerName: user.name || user.email?.split('@')[0] || 'Customer',
+        userId: user!.id,
+        customerId: user!.id,
+        customerName: user!.name || user!.email?.split('@')[0] || 'Customer',
         customerPhone: finalContactPhone,
-        customerContact: finalContactPhone || user.email || '',
-        customerEmail: user.email || '',
+        customerContact: finalContactPhone || user!.email || '',
+        customerEmail: user!.email || '',
         providerId: service.providerId,
         providerName: service.providerName,
         providerAvatar: service.providerAvatar,
@@ -167,10 +180,13 @@ export default function BookServiceScreen() {
         bookingDate: selectedDate,
         timeSlot: selectedSlot,
         bookingTime: selectedSlot,
-        address: selectedAddress,
+        address: selectedAddress!,
         notes: notes.trim(),
-        paymentStatus: paymentMethod === 'cash' ? 'unpaid' : 'paid',
-        paymentMethod,
+        paymentStatus: isPaid ? 'paid' : 'unpaid',
+        paymentMethod: paymentMethod === 'card' ? 'card' : 'cash',
+        stripePaymentId: stripeRes?.paymentIntentId,
+        stripeChargeId: stripeRes?.chargeId,
+        stripeReceiptUrl: stripeRes?.receiptUrl,
         couponCode: appliedCoupon?.code,
         discountAmount: discountAmount > 0 ? discountAmount : undefined,
       });
@@ -394,16 +410,23 @@ export default function BookServiceScreen() {
               activeOpacity={0.7}
             >
               <View style={styles.paymentOptionLeft}>
-                <Ionicons name="card-outline" size={20} color={Palette.gray700} />
-                <View>
-                  <Text style={styles.paymentOptionTitle}>Credit / Debit Card</Text>
-                  <Text style={styles.paymentOptionSub}>Instant secure payment</Text>
+                <View style={styles.stripeCardBadge}>
+                  <Ionicons name="card" size={16} color={Palette.white} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.paymentOptionTitle}>Credit / Debit Card</Text>
+                    <View style={styles.stripeTagBadge}>
+                      <Text style={styles.stripeTagText}>STRIPE</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.paymentOptionSub}>Pay online securely with Stripe (Visa, MC, Amex)</Text>
                 </View>
               </View>
               <Ionicons
                 name={paymentMethod === 'card' ? 'radio-button-on' : 'radio-button-off'}
                 size={20}
-                color={paymentMethod === 'card' ? Palette.primary : Palette.gray400}
+                color={paymentMethod === 'card' ? '#635BFF' : Palette.gray400}
               />
             </TouchableOpacity>
           </View>
@@ -536,18 +559,30 @@ export default function BookServiceScreen() {
         </View>
 
         <Button
-          title="Confirm & Book"
+          title={paymentMethod === 'card' ? `Pay $${totalPrice} with Stripe` : 'Confirm & Book'}
           onPress={handleConfirmBooking}
           loading={isSubmitting}
-          icon="checkmark-done"
+          icon={paymentMethod === 'card' ? 'card' : 'checkmark-done'}
           size="lg"
-          style={styles.confirmBtn}
+          style={[styles.confirmBtn, paymentMethod === 'card' && { backgroundColor: '#635BFF' }]}
         />
       </View>
 
       <AddressSelectorModal
         visible={addressModalVisible}
         onClose={() => setAddressModalVisible(false)}
+      />
+
+      <StripePaymentModal
+        visible={stripeModalVisible}
+        onClose={() => setStripeModalVisible(false)}
+        amount={totalPrice}
+        serviceTitle={service.title}
+        customerName={user?.name || ''}
+        customerEmail={user?.email || ''}
+        onPaymentSuccess={(res) => {
+          executeBookingCreation(res);
+        }}
       />
     </SafeAreaView>
   );
@@ -815,6 +850,28 @@ const styles = StyleSheet.create({
   paymentOptionSub: {
     fontSize: 11,
     color: Palette.gray500,
+  },
+  stripeCardBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: BorderRadius.md,
+    backgroundColor: '#635BFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stripeTagBadge: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  stripeTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#4F46E5',
+    letterSpacing: 0.5,
   },
   billSummaryCard: {
     backgroundColor: Palette.white,

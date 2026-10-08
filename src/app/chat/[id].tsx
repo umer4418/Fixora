@@ -22,53 +22,51 @@ import * as MarketplaceService from '../../services/marketplaceService';
 import { Button } from '../../components/common/Button';
 
 export default function ChatScreen() {
-  const { id: bookingId } = useLocalSearchParams<{ id: string }>();
+  const { id: bookingId, target } = useLocalSearchParams<{ id: string; target?: string }>();
   const { user, activeRole } = useAuth();
-  const { bookings } = useMarketplace();
+  const { bookings, notifications, markNotificationRead } = useMarketplace();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [fetchedBooking, setFetchedBooking] = useState<Booking | null>(null);
-  const [isLoadingBooking, setIsLoadingBooking] = useState(true);
-  const flatListRef = useRef<FlatList>(null);
-
   const contextBooking = useMemo(() => {
     return bookings.find((b) => b.id === bookingId || b.orderId === bookingId || b.bookingId === bookingId);
   }, [bookings, bookingId]);
 
+  const [fetchedBooking, setFetchedBooking] = useState<Booking | null>(null);
+  const [isFetchingRemote, setIsFetchingRemote] = useState(() => !contextBooking && !!bookingId);
+  const flatListRef = useRef<FlatList>(null);
+
+  const isAdmin = user?.role === 'admin';
+  const [adminTarget, setAdminTarget] = useState<'customer' | 'provider'>(
+    target === 'provider' ? 'provider' : 'customer'
+  );
+
   const booking = contextBooking || fetchedBooking;
 
   useEffect(() => {
-    let isMounted = true;
-    const loadBookingData = async () => {
-      if (contextBooking) {
-        setIsLoadingBooking(false);
-        return;
-      }
-      if (!bookingId) {
-        setIsLoadingBooking(false);
-        return;
-      }
+    if (contextBooking || !bookingId) return;
 
-      setIsLoadingBooking(true);
-      try {
-        const found = await MarketplaceService.getBookingById(bookingId, user?.id, user?.role);
+    let isMounted = true;
+    MarketplaceService.getBookingById(bookingId, user?.id, user?.role)
+      .then((found) => {
         if (isMounted && found) {
           setFetchedBooking(found);
         }
-      } catch (e) {
+      })
+      .catch((e) => {
         console.warn('Failed to load chat booking:', e);
-      } finally {
-        if (isMounted) setIsLoadingBooking(false);
-      }
-    };
+      })
+      .finally(() => {
+        if (isMounted) setIsFetchingRemote(false);
+      });
 
-    loadBookingData();
     return () => {
       isMounted = false;
     };
   }, [bookingId, contextBooking, user?.id, user?.role]);
+
+  const isLoadingBooking = !contextBooking && !fetchedBooking && isFetchingRemote;
 
   const isAuthorized = useMemo(() => {
     if (!user || !booking) return false;
@@ -89,20 +87,65 @@ export default function ChatScreen() {
 
   const isProvider = user?.id === booking?.providerId || activeRole === 'provider' || user?.role === 'provider';
 
-  const otherPersonName = isProvider
+  const otherPersonName = isAdmin
+    ? adminTarget === 'customer'
+      ? booking?.customerName || 'Customer'
+      : booking?.providerName || 'Service Provider'
+    : isProvider
     ? booking?.customerName || 'Customer'
     : booking?.providerName || 'Service Provider';
 
-  const otherPersonAvatar = isProvider ? undefined : booking?.providerAvatar;
+  const otherPersonAvatar = isAdmin
+    ? adminTarget === 'provider'
+      ? booking?.providerAvatar
+      : undefined
+    : isProvider
+    ? undefined
+    : booking?.providerAvatar;
+
+  // Filter messages based on thread separation
+  const displayedMessages = useMemo(() => {
+    if (!user || !booking) return [];
+    if (isAdmin) {
+      if (adminTarget === 'customer') {
+        return messages.filter(
+          (m) =>
+            m.channel === 'admin_customer' ||
+            (!m.channel &&
+              (m.senderRole === 'customer' ||
+                m.recipientRole === 'customer' ||
+                m.recipientId === booking.customerId ||
+                m.senderId === booking.customerId))
+        );
+      } else {
+        return messages.filter(
+          (m) =>
+            m.channel === 'admin_provider' ||
+            (!m.channel &&
+              (m.senderRole === 'provider' ||
+                m.recipientRole === 'provider' ||
+                m.recipientId === booking.providerId ||
+                m.senderId === booking.providerId))
+        );
+      }
+    } else if (isProvider) {
+      // Provider does not see private messages between admin and customer
+      return messages.filter((m) => m.channel !== 'admin_customer');
+    } else {
+      // Customer does not see private messages between admin and provider
+      return messages.filter((m) => m.channel !== 'admin_provider');
+    }
+  }, [messages, user, isAdmin, adminTarget, booking, isProvider]);
 
   // Real-time chat messages listener
+  const targetBookingId = booking?.id;
   useEffect(() => {
-    if (!bookingId || !booking) return;
+    if (!bookingId || !targetBookingId) return;
 
     let unsub: MarketplaceService.Unsubscribe = () => {};
 
     // Initial fetch
-    MarketplaceService.getChatMessages(booking.id, user?.id).then((initial) => {
+    MarketplaceService.getChatMessages(targetBookingId, user?.id).then((initial) => {
       setMessages(initial);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: false });
@@ -110,7 +153,7 @@ export default function ChatScreen() {
     });
 
     // Real-time Firestore sync
-    unsub = MarketplaceService.subscribeToChatMessages(booking.id, (liveMsgs) => {
+    unsub = MarketplaceService.subscribeToChatMessages(targetBookingId, (liveMsgs) => {
       setMessages(liveMsgs);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
@@ -120,21 +163,67 @@ export default function ChatScreen() {
     return () => {
       unsub();
     };
-  }, [bookingId, booking, user?.id]);
+  }, [bookingId, targetBookingId, user?.id]);
+
+  // Mark all unread chat notifications for this booking as read while viewing
+  const markedChatNotifIdsRef = useRef<Set<string>>(new Set());
+  const activeBookingId = booking?.id;
+  const activeOrderId = booking?.orderId;
+  useEffect(() => {
+    if (!activeBookingId) return;
+    const unreadForThisBooking = notifications.filter(
+      (n) =>
+        n.type === 'chat' &&
+        !n.read &&
+        !markedChatNotifIdsRef.current.has(n.id) &&
+        (n.bookingId === activeBookingId || (activeOrderId && n.bookingId === activeOrderId))
+    );
+    if (unreadForThisBooking.length === 0) return;
+    for (const notif of unreadForThisBooking) {
+      markedChatNotifIdsRef.current.add(notif.id);
+      markNotificationRead(notif.id);
+    }
+  }, [activeBookingId, activeOrderId, notifications, markNotificationRead]);
 
   const handleSend = async (textToSend?: string) => {
     const text = (textToSend || inputText).trim();
     if (!text || !booking || !user || isSending) return;
 
-    const recipientId =
-      user.id === booking.customerId ? booking.providerId : booking.customerId;
+    let recipientId = booking.customerId || booking.userId || 'customer';
+    let recipientRole: UserRole = 'customer';
+    let channel: string = 'customer_provider';
 
-    const senderRole: UserRole =
-      user.id === booking.customerId
-        ? 'customer'
-        : user.id === booking.providerId
-        ? 'provider'
-        : 'admin';
+    if (isAdmin) {
+      if (adminTarget === 'customer') {
+        recipientId = booking.customerId || booking.userId || 'customer';
+        recipientRole = 'customer';
+        channel = 'admin_customer';
+      } else {
+        recipientId = booking.providerId || 'prov-1';
+        recipientRole = 'provider';
+        channel = 'admin_provider';
+      }
+    } else if (isProvider) {
+      recipientId = booking.customerId || booking.userId || 'customer';
+      recipientRole = 'customer';
+      channel = 'customer_provider';
+    } else {
+      recipientId = booking.providerId || 'prov-1';
+      recipientRole = 'provider';
+      channel = 'customer_provider';
+    }
+
+    const senderRole: UserRole = isAdmin
+      ? 'admin'
+      : isProvider
+      ? 'provider'
+      : 'customer';
+
+    const senderName = isAdmin
+      ? 'Fixora Support (Admin)'
+      : isProvider
+      ? booking.providerName || user.name || 'Provider'
+      : booking.customerName || user.name || 'Customer';
 
     setIsSending(true);
     setInputText('');
@@ -144,9 +233,11 @@ export default function ChatScreen() {
         bookingId: booking.id,
         orderId: booking.orderId || booking.id,
         senderId: user.id,
-        senderName: user.name || (senderRole === 'provider' ? 'Provider' : 'Customer'),
+        senderName,
         senderRole,
         recipientId,
+        recipientRole,
+        channel,
         text,
       });
 
@@ -178,6 +269,18 @@ export default function ChatScreen() {
     );
   }
 
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else if (isAdmin) {
+      router.replace('/admin-portal');
+    } else if (isProvider) {
+      router.replace('/provider-portal');
+    } else {
+      router.replace('/(tabs)/bookings');
+    }
+  };
+
   if (!booking || !isAuthorized) {
     return (
       <SafeAreaView style={styles.safeArea}>
@@ -187,7 +290,7 @@ export default function ChatScreen() {
           <Text style={styles.errorSubtitle}>
             This chat is linked to a private order that is not associated with your account.
           </Text>
-          <Button title="Go Back" onPress={() => router.back()} style={{ marginTop: 16 }} />
+          <Button title="Go Back" onPress={handleBack} style={{ marginTop: 16 }} />
         </View>
       </SafeAreaView>
     );
@@ -201,7 +304,21 @@ export default function ChatScreen() {
 
   const currentOrderStatus = booking.orderStatus || booking.status.toUpperCase();
 
-  const quickReplies = isProvider
+  const quickReplies = isAdmin
+    ? adminTarget === 'customer'
+      ? [
+          'Hello! Support is reviewing your order.',
+          'We are checking with the provider.',
+          'Is there any issue with this booking?',
+          'Thank you for contacting Fixora support!',
+        ]
+      : [
+          'Please confirm your arrival time.',
+          'Customer requested a status update.',
+          'Make sure to mark the order complete when done.',
+          'Support inquiry on this job.',
+        ]
+    : isProvider
     ? ['I am on my way!', 'Arrived at your location', 'Service is in progress', 'Work completed!']
     : ['Gate code is #4821', 'Please ring the front doorbell', 'Are you available now?', 'Thank you!'];
 
@@ -210,9 +327,11 @@ export default function ChatScreen() {
       {/* Top Header */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={handleBack}
           style={styles.backBtn}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
         >
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
@@ -223,7 +342,15 @@ export default function ChatScreen() {
           ) : (
             <View style={styles.avatarFallback}>
               <Ionicons
-                name={isProvider ? 'person' : 'construct'}
+                name={
+                  isAdmin
+                    ? adminTarget === 'customer'
+                      ? 'person'
+                      : 'construct'
+                    : isProvider
+                    ? 'person'
+                    : 'construct'
+                }
                 size={20}
                 color={Palette.primary}
               />
@@ -234,7 +361,11 @@ export default function ChatScreen() {
               {otherPersonName}
             </Text>
             <Text style={styles.headerService} numberOfLines={1}>
-              {booking.serviceTitle}
+              {isAdmin
+                ? adminTarget === 'customer'
+                  ? `Customer • ${booking.serviceTitle}`
+                  : `Assigned Provider • ${booking.serviceTitle}`
+                : booking.serviceTitle}
             </Text>
           </View>
         </View>
@@ -246,6 +377,53 @@ export default function ChatScreen() {
           <Ionicons name="information-circle-outline" size={22} color={Palette.primary} />
         </TouchableOpacity>
       </View>
+
+      {/* Admin Separate Chat Threads Tab Switcher */}
+      {isAdmin && (
+        <View style={styles.adminThreadTabs}>
+          <TouchableOpacity
+            style={[styles.adminThreadTab, adminTarget === 'customer' && styles.adminThreadTabActive]}
+            onPress={() => setAdminTarget('customer')}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name="person"
+              size={15}
+              color={adminTarget === 'customer' ? Palette.white : Palette.gray700}
+            />
+            <Text
+              style={[
+                styles.adminThreadTabText,
+                adminTarget === 'customer' && styles.adminThreadTabTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              Chat Customer ({booking.customerName})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.adminThreadTab, adminTarget === 'provider' && styles.adminThreadTabActive]}
+            onPress={() => setAdminTarget('provider')}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name="construct"
+              size={15}
+              color={adminTarget === 'provider' ? Palette.white : Palette.gray700}
+            />
+            <Text
+              style={[
+                styles.adminThreadTabText,
+                adminTarget === 'provider' && styles.adminThreadTabTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              Chat Provider ({booking.providerName})
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Order Context Banner */}
       <View style={styles.orderBanner}>
@@ -270,7 +448,7 @@ export default function ChatScreen() {
         {/* Messages List */}
         <FlatList
           ref={flatListRef}
-          data={messages}
+          data={displayedMessages}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messagesList}
           showsVerticalScrollIndicator={false}
@@ -283,9 +461,11 @@ export default function ChatScreen() {
 
             const senderLabel = isMe
               ? 'You'
+              : item.senderRole === 'admin'
+              ? 'Fixora Support (Admin)'
               : item.senderRole === 'provider'
-              ? 'Provider'
-              : 'Customer';
+              ? `Provider (${booking.providerName})`
+              : `Customer (${booking.customerName})`;
 
             return (
               <View
@@ -630,5 +810,38 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: Palette.gray300,
+  },
+  adminThreadTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    padding: 6,
+    gap: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: Palette.gray200,
+  },
+  adminThreadTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.gray200,
+  },
+  adminThreadTabActive: {
+    backgroundColor: Palette.primary,
+    borderColor: Palette.primary,
+  },
+  adminThreadTabText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Palette.gray700,
+  },
+  adminThreadTabTextActive: {
+    color: Palette.white,
   },
 });

@@ -109,6 +109,9 @@ export interface Booking {
   providerStatus?: 'Pending' | 'Accepted' | 'Rejected' | string;
   paymentStatus: 'unpaid' | 'paid' | 'Pending' | 'Paid' | string;
   paymentMethod: 'cash' | 'card' | 'wallet' | 'Cash on Delivery' | string;
+  stripePaymentId?: string;
+  stripeChargeId?: string;
+  stripeReceiptUrl?: string;
   couponCode?: string;
   discountAmount?: number;
   createdAt: string;
@@ -121,6 +124,8 @@ export interface ChatMessage {
   bookingId: string;
   orderId?: string;
   chatId?: string;
+  channel?: 'customer_provider' | 'admin_customer' | 'admin_provider' | string;
+  recipientRole?: UserRole;
   senderId: string;
   senderName: string;
   senderRole: UserRole;

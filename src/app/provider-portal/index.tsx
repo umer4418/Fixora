@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,16 +12,19 @@ import {
   Modal,
   TextInput,
   Image,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
 import { useMarketplace } from '../../context/MarketplaceContext';
 import { Booking, BookingStatus } from '../../types';
 import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
+import { LiveChatPopupWidget } from '../../components/chat/LiveChatPopupWidget';
 
 const DECLINE_REASONS = [
   'Schedule conflict / Already booked',
@@ -32,18 +35,27 @@ const DECLINE_REASONS = [
 ];
 
 export default function ProviderDashboardScreen() {
-  const { user, logout } = useAuth();
+  const { user, logout, activeRole } = useAuth();
+  const { width: screenWidth } = useWindowDimensions();
+  const isNarrowScreen = screenWidth < 390;
+  const isTinyScreen = screenWidth < 340;
+
   const {
     bookings,
     changeBookingStatus,
     respondToOrder,
     setProviderAvailability,
     refreshAll,
+    notifications,
+    markNotificationRead,
     unreadNotificationsCount,
   } = useMarketplace();
 
   const [refreshing, setRefreshing] = useState(false);
   const [isAvailable, setIsAvailable] = useState(true);
+
+  // Job Filter state: 'all' | 'requests' | 'active' | 'completed'
+  const [selectedJobFilter, setSelectedJobFilter] = useState<'all' | 'requests' | 'active' | 'completed'>('all');
 
   // Decline Modal state
   const [declineBooking, setDeclineBooking] = useState<Booking | null>(null);
@@ -51,8 +63,43 @@ export default function ProviderDashboardScreen() {
   const [customDeclineNote, setCustomDeclineNote] = useState<string>('');
   const [isSubmittingDecline, setIsSubmittingDecline] = useState<boolean>(false);
 
-  // Customer Chats Modal state
+  // Customer Chats Modal state & persistent viewed timestamp
   const [chatsModalVisible, setChatsModalVisible] = useState<boolean>(false);
+  const [lastSeenChatTime, setLastSeenChatTime] = useState<number>(0);
+
+  useEffect(() => {
+    AsyncStorage.getItem('@fixora_provider_chats_last_seen').then((val) => {
+      if (val) {
+        setLastSeenChatTime(parseInt(val, 10));
+      }
+    });
+  }, []);
+
+  // Compute unread chat messages/notifications
+  const unreadChatCount = useMemo(() => {
+    const chatNotifs = notifications.filter(
+      (n) =>
+        n.type === 'chat' &&
+        !n.read &&
+        (!lastSeenChatTime || new Date(n.createdAt).getTime() > lastSeenChatTime)
+    );
+    return chatNotifs.length;
+  }, [notifications, lastSeenChatTime]);
+
+  const handleOpenChatsModal = async () => {
+    setChatsModalVisible(true);
+    const now = Date.now();
+    setLastSeenChatTime(now);
+    try {
+      await AsyncStorage.setItem('@fixora_provider_chats_last_seen', now.toString());
+      const chatNotifs = notifications.filter((n) => n.type === 'chat' && !n.read);
+      for (const cn of chatNotifs) {
+        await markNotificationRead(cn.id);
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   // Auto-refresh when screen comes into focus
   useFocusEffect(
@@ -98,31 +145,46 @@ export default function ProviderDashboardScreen() {
     ]);
   };
 
-  // Provider bookings (assigned to this authenticated provider or demo prov-1)
+  // Provider bookings (assigned to this authenticated provider, demo prov-1, unassigned, or created on device)
   const providerBookings = useMemo(() => {
-    if (!user) return [];
+    const effectiveUserId = user?.id || (activeRole === 'provider' ? 'prov-1' : '');
+    const isProvRole = activeRole === 'provider' || user?.role === 'provider';
     return bookings.filter(
       (b) =>
-        b.providerId === user.id ||
-        (user.role === 'provider' && (b.providerId === 'prov-1' || user.id === 'prov-1')) ||
-        (b.providerEmail && user.email && b.providerEmail.toLowerCase() === user.email.toLowerCase()) ||
-        (b.providerName && user.name && b.providerName.toLowerCase() === user.name.toLowerCase()) ||
-        user.role === 'provider'
+        (effectiveUserId && b.providerId === effectiveUserId) ||
+        b.providerId === 'prov-1' ||
+        !b.providerId ||
+        effectiveUserId === 'prov-1' ||
+        isProvRole
     );
-  }, [bookings, user]);
+  }, [bookings, user, activeRole]);
 
   const incomingRequests = useMemo(() => {
-    return providerBookings.filter((b) => b.status === 'pending');
+    return providerBookings.filter((b) => {
+      const s = (b.status || '').toLowerCase().trim();
+      const os = (b.orderStatus || '').toLowerCase().trim();
+      const bs = (b.bookingStatus || '').toLowerCase().trim();
+      return (
+        s === 'pending' ||
+        s === 'placed' ||
+        os === 'placed' ||
+        os === 'pending' ||
+        os === 'pending provider acceptance' ||
+        bs === 'pending' ||
+        bs === 'placed'
+      );
+    });
   }, [providerBookings]);
 
   const activeJobs = useMemo(() => {
-    return providerBookings.filter(
-      (b) => b.status === 'accepted' || b.status === 'on_the_way' || b.status === 'in_progress'
-    );
+    return providerBookings.filter((b) => {
+      const s = (b.status || '').toLowerCase().trim();
+      return s === 'accepted' || s === 'on_the_way' || s === 'in_progress';
+    });
   }, [providerBookings]);
 
   const completedJobs = useMemo(() => {
-    return providerBookings.filter((b) => b.status === 'completed');
+    return providerBookings.filter((b) => (b.status || '').toLowerCase().trim() === 'completed');
   }, [providerBookings]);
 
   const totalEarnings = useMemo(() => {
@@ -131,7 +193,7 @@ export default function ProviderDashboardScreen() {
 
   // Customer Chats list (all customer bookings for this provider)
   const customerChatsList = useMemo(() => {
-    return providerBookings.filter((b) => b.status !== 'cancelled');
+    return providerBookings.filter((b) => (b.status || '').toLowerCase().trim() !== 'cancelled');
   }, [providerBookings]);
 
   const handleDirectCompleteOrder = async (b: Booking) => {
@@ -218,29 +280,17 @@ export default function ProviderDashboardScreen() {
           <View style={styles.providerBadgeBox}>
             <Ionicons name="construct" size={20} color={Palette.white} />
           </View>
-          <View>
-            <Text style={styles.portalTitle}>Provider Portal</Text>
-            <Text style={styles.providerName}>{user?.name || 'David Miller'}</Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.portalTitle} numberOfLines={1}>
+              Provider Portal
+            </Text>
+            <Text style={styles.providerName} numberOfLines={1}>
+              {user?.name || 'David Miller'}
+            </Text>
           </View>
         </View>
 
-        <View style={styles.navRight}>
-          {/* Customer Chats button with live count */}
-          <TouchableOpacity
-            style={styles.notifBtn}
-            onPress={() => setChatsModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="chatbubbles-outline" size={20} color={Palette.primary} />
-            {customerChatsList.length > 0 && (
-              <View style={[styles.notifBadge, { backgroundColor: Palette.primary }]}>
-                <Text style={styles.notifBadgeText}>
-                  {customerChatsList.length > 9 ? '9+' : customerChatsList.length}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
+        <View style={[styles.navRight, isNarrowScreen && { gap: 6 }]}>
           {/* Notification Bell with live unread badge */}
           <TouchableOpacity
             style={styles.notifBtn}
@@ -257,7 +307,7 @@ export default function ProviderDashboardScreen() {
             )}
           </TouchableOpacity>
 
-          <View style={styles.availabilityToggle}>
+          <View style={[styles.availabilityToggle, isNarrowScreen && { gap: 4 }]}>
             <Text style={[styles.availabilityText, { color: isAvailable ? Palette.accent : Palette.gray400 }]}>
               {isAvailable ? 'Online' : 'Busy'}
             </Text>
@@ -270,13 +320,13 @@ export default function ProviderDashboardScreen() {
           </View>
 
           <TouchableOpacity
-            style={styles.logoutBtn}
+            style={[styles.logoutBtn, isNarrowScreen && styles.logoutBtnCompact]}
             onPress={handleLogout}
             activeOpacity={0.8}
             accessibilityLabel="Sign Out"
           >
             <Ionicons name="log-out-outline" size={16} color={Palette.danger} />
-            <Text style={styles.logoutBtnText}>Logout</Text>
+            {!isTinyScreen && <Text style={styles.logoutBtnText}>Logout</Text>}
           </TouchableOpacity>
         </View>
       </View>
@@ -290,67 +340,164 @@ export default function ProviderDashboardScreen() {
         {/* Quick Navigation Cards */}
         <View style={styles.navRow}>
           <TouchableOpacity
-            style={styles.navCard}
+            style={[styles.navCard, isNarrowScreen && styles.navCardNarrow]}
             onPress={() => router.push('/provider-portal/services')}
             activeOpacity={0.8}
           >
             <View style={[styles.navCardIcon, { backgroundColor: Palette.primarySoft }]}>
               <Ionicons name="construct" size={20} color={Palette.primary} />
             </View>
-            <Text style={styles.navCardTitle}>My Services</Text>
-            <Text style={styles.navCardSub}>Create & set prices</Text>
+            <Text style={styles.navCardTitle} numberOfLines={1}>My Services</Text>
+            <Text style={styles.navCardSub} numberOfLines={1}>Create & set prices</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.navCard}
-            onPress={() => setChatsModalVisible(true)}
+            style={[styles.navCard, isNarrowScreen && styles.navCardNarrow]}
+            onPress={handleOpenChatsModal}
             activeOpacity={0.8}
           >
             <View style={[styles.navCardIcon, { backgroundColor: '#EFF6FF' }]}>
               <Ionicons name="chatbubbles" size={20} color={Palette.primary} />
             </View>
-            <Text style={styles.navCardTitle}>Customer Chats</Text>
-            <Text style={styles.navCardSub}>{customerChatsList.length} conversation{customerChatsList.length === 1 ? '' : 's'}</Text>
+            <Text style={styles.navCardTitle} numberOfLines={1}>Customer Chats</Text>
+            <Text style={styles.navCardSub} numberOfLines={1}>
+              {customerChatsList.length} conversation{customerChatsList.length === 1 ? '' : 's'}
+              {unreadChatCount > 0 ? ` (${unreadChatCount} new)` : ''}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.navCard}
+            style={[styles.navCard, isNarrowScreen && styles.navCardNarrow]}
             onPress={() => router.push('/provider-portal/earnings')}
             activeOpacity={0.8}
           >
             <View style={[styles.navCardIcon, { backgroundColor: Palette.accentSoft }]}>
               <Ionicons name="wallet" size={20} color={Palette.accent} />
             </View>
-            <Text style={styles.navCardTitle}>View Earnings</Text>
-            <Text style={styles.navCardSub}>${totalEarnings} total</Text>
+            <Text style={styles.navCardTitle} numberOfLines={1}>View Earnings</Text>
+            <Text style={styles.navCardSub} numberOfLines={1}>${totalEarnings} total</Text>
           </TouchableOpacity>
         </View>
 
         {/* KPI Metrics Grid */}
         <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
+          <TouchableOpacity
+            style={[
+              styles.metricCard,
+              isNarrowScreen && styles.metricCardNarrow,
+              selectedJobFilter === 'requests' && styles.metricCardActive,
+            ]}
+            onPress={() => setSelectedJobFilter((prev) => (prev === 'requests' ? 'all' : 'requests'))}
+            activeOpacity={0.8}
+          >
+            <View style={styles.metricIconHeader}>
+              <Ionicons name="mail-unread-outline" size={18} color={Palette.warning} />
+            </View>
             <Text style={styles.metricNumber}>{incomingRequests.length}</Text>
-            <Text style={styles.metricLabel}>New Requests</Text>
-          </View>
+            <Text style={styles.metricLabel} numberOfLines={1}>New Requests</Text>
+          </TouchableOpacity>
 
-          <View style={styles.metricCard}>
+          <TouchableOpacity
+            style={[
+              styles.metricCard,
+              isNarrowScreen && styles.metricCardNarrow,
+              selectedJobFilter === 'active' && styles.metricCardActive,
+            ]}
+            onPress={() => setSelectedJobFilter((prev) => (prev === 'active' ? 'all' : 'active'))}
+            activeOpacity={0.8}
+          >
+            <View style={styles.metricIconHeader}>
+              <Ionicons name="construct-outline" size={18} color={Palette.primary} />
+            </View>
             <Text style={styles.metricNumber}>{activeJobs.length}</Text>
-            <Text style={styles.metricLabel}>Active Jobs</Text>
-          </View>
+            <Text style={styles.metricLabel} numberOfLines={1}>Active Jobs</Text>
+          </TouchableOpacity>
 
-          <View style={styles.metricCard}>
-            <Text style={styles.metricNumber}>{completedJobs.length}</Text>
-            <Text style={styles.metricLabel}>Completed</Text>
-          </View>
+          <TouchableOpacity
+            style={[
+              styles.metricCard,
+              isNarrowScreen && styles.metricCardNarrow,
+              styles.completedMetricCard,
+              selectedJobFilter === 'completed' && styles.completedMetricCardActive,
+            ]}
+            onPress={() => setSelectedJobFilter((prev) => (prev === 'completed' ? 'all' : 'completed'))}
+            activeOpacity={0.8}
+          >
+            <View style={styles.metricIconHeader}>
+              <Ionicons name="checkmark-done-circle" size={20} color="#059669" />
+            </View>
+            <Text style={[styles.metricNumber, { color: '#059669' }]}>{completedJobs.length}</Text>
+            <Text style={[styles.metricLabel, { color: '#047857', fontWeight: '700' }]} numberOfLines={1}>Completed</Text>
+          </TouchableOpacity>
 
-          <View style={styles.metricCard}>
+          <View style={[styles.metricCard, isNarrowScreen && styles.metricCardNarrow]}>
+            <View style={styles.metricIconHeader}>
+              <Ionicons name="star" size={18} color={Palette.star} />
+            </View>
             <Text style={[styles.metricNumber, { color: Palette.star }]}>4.9 ★</Text>
-            <Text style={styles.metricLabel}>Rating</Text>
+            <Text style={styles.metricLabel} numberOfLines={1}>Rating</Text>
           </View>
         </View>
 
+        {/* Filter Navigation Pills */}
+        <View style={styles.filterPillsRow}>
+          <TouchableOpacity
+            style={[styles.filterPill, selectedJobFilter === 'all' && styles.filterPillActive]}
+            onPress={() => setSelectedJobFilter('all')}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.filterPillText, selectedJobFilter === 'all' && styles.filterPillTextActive]}>
+              All ({providerBookings.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterPill, selectedJobFilter === 'requests' && styles.filterPillActive]}
+            onPress={() => setSelectedJobFilter('requests')}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.filterPillText, selectedJobFilter === 'requests' && styles.filterPillTextActive]}>
+              Requests ({incomingRequests.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterPill, selectedJobFilter === 'active' && styles.filterPillActive]}
+            onPress={() => setSelectedJobFilter('active')}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.filterPillText, selectedJobFilter === 'active' && styles.filterPillTextActive]}>
+              Active ({activeJobs.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.filterPill,
+              styles.completedFilterPill,
+              selectedJobFilter === 'completed' && styles.completedFilterPillActive,
+            ]}
+            onPress={() => setSelectedJobFilter('completed')}
+            activeOpacity={0.75}
+          >
+            <Ionicons
+              name="checkmark-done-circle"
+              size={15}
+              color={selectedJobFilter === 'completed' ? Palette.white : '#059669'}
+            />
+            <Text
+              style={[
+                styles.filterPillText,
+                { color: selectedJobFilter === 'completed' ? Palette.white : '#059669', fontWeight: '700' },
+              ]}
+            >
+              Completed ({completedJobs.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Incoming Requests Alert Banner */}
-        {incomingRequests.length > 0 && (
+        {incomingRequests.length > 0 && selectedJobFilter !== 'completed' && (
           <View style={styles.alertBanner}>
             <Ionicons name="notifications" size={20} color="#B45309" />
             <View style={{ flex: 1 }}>
@@ -364,154 +511,268 @@ export default function ProviderDashboardScreen() {
           </View>
         )}
 
-        {/* Incoming Booking Requests */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Incoming Booking Requests ({incomingRequests.length})</Text>
-        </View>
-
-        {incomingRequests.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Ionicons name="mail-open-outline" size={32} color={Palette.gray400} />
-            <Text style={styles.emptyText}>No pending requests right now</Text>
-          </View>
-        ) : (
-          incomingRequests.map((b) => (
-            <View key={b.id} style={styles.requestCard}>
-              <View style={styles.requestTop}>
-                <View>
-                  <Text style={styles.serviceName}>{b.serviceTitle}</Text>
-                  <Text style={styles.customerName}>Customer: {b.customerName}</Text>
-                  <Text style={styles.bookingSchedule}>
-                    📅 {b.date} • {b.timeSlot}
-                  </Text>
-                </View>
-                <Text style={styles.requestPrice}>${b.totalPrice}</Text>
-              </View>
-
-              <View style={styles.addressBox}>
-                <Ionicons name="location-outline" size={14} color={Palette.gray500} />
-                <Text style={styles.addressText} numberOfLines={1}>
-                  {b.address.street}, {b.address.city}
-                </Text>
-              </View>
-
-              {b.notes ? <Text style={styles.notesText}>Notes: &ldquo;{b.notes}&rdquo;</Text> : null}
-
-              <View style={styles.requestActions}>
-                <TouchableOpacity
-                  style={styles.chatCustomerBtn}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/chat/[id]',
-                      params: { id: b.id },
-                    })
-                  }
-                >
-                  <Ionicons name="chatbubbles" size={15} color={Palette.primary} />
-                  <Text style={styles.chatCustomerText}>Chat</Text>
-                </TouchableOpacity>
-
-                <Button
-                  title="Decline"
-                  variant="outline"
-                  onPress={() => handleOpenDeclineModal(b)}
-                  style={{ flex: 1, borderColor: Palette.danger, marginLeft: 8 }}
-                  textStyle={{ color: Palette.danger }}
-                  size="sm"
-                />
-                <Button
-                  title="Accept Booking"
-                  onPress={() => handleAcceptBooking(b)}
-                  style={{ flex: 1.5, marginLeft: 8 }}
-                  size="sm"
-                />
-              </View>
+        {/* ===================== SECTION 1: INCOMING REQUESTS ===================== */}
+        {(selectedJobFilter === 'all' || selectedJobFilter === 'requests') && (
+          <View style={{ marginBottom: 12 }}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Incoming Booking Requests ({incomingRequests.length})</Text>
             </View>
-          ))
-        )}
 
-        {/* Active Jobs & Live Status Updater */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Active Jobs ({activeJobs.length})</Text>
-        </View>
-
-        {activeJobs.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Ionicons name="briefcase-outline" size={32} color={Palette.gray400} />
-            <Text style={styles.emptyText}>No active jobs in progress</Text>
-          </View>
-        ) : (
-          activeJobs.map((b) => (
-            <View key={b.id} style={styles.activeJobCard}>
-                <View style={styles.jobTopRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.serviceName}>{b.serviceTitle}</Text>
-                    <Text style={styles.customerName}>For: {b.customerName}</Text>
-                    <Text style={styles.scheduleText}>
-                      {b.date} • {b.timeSlot}
-                    </Text>
-                  </View>
-                  <Badge status={b.status} />
-                </View>
-
-                <View style={styles.jobActionsRow}>
+            {incomingRequests.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Ionicons name="mail-open-outline" size={32} color={Palette.gray400} />
+                <Text style={styles.emptyText}>No pending requests right now</Text>
+              </View>
+            ) : (
+              incomingRequests.map((b) => (
+                <View key={b.id} style={styles.requestCard}>
                   <TouchableOpacity
-                    style={styles.chatCustomerBtn}
+                    style={styles.requestTop}
                     onPress={() =>
                       router.push({
-                        pathname: '/chat/[id]',
+                        pathname: '/booking/[id]',
                         params: { id: b.id },
                       })
                     }
+                    activeOpacity={0.7}
                   >
-                    <Ionicons name="chatbubbles" size={16} color={Palette.primary} />
-                    <Text style={styles.chatCustomerText}>Chat</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.serviceName}>{b.serviceTitle}</Text>
+                      <Text style={styles.customerName}>Customer: {b.customerName}</Text>
+                      <Text style={styles.bookingSchedule}>
+                        📅 {b.date} • {b.timeSlot}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                      <Text style={styles.requestPrice}>${b.totalPrice}</Text>
+                      <Text style={{ fontSize: 11, color: Palette.primary, fontWeight: '600', marginTop: 2 }}>
+                        View Details ›
+                      </Text>
+                    </View>
                   </TouchableOpacity>
 
-                  {b.status === 'accepted' ? (
-                    <>
-                      <Button
-                        title="Complete Order"
-                        onPress={() => handleDirectCompleteOrder(b)}
-                        style={{ flex: 1.2, marginLeft: 8, backgroundColor: Palette.accent }}
-                        size="sm"
-                      />
-                      <Button
-                        title="On The Way"
-                        variant="outline"
-                        onPress={() => handleAdvanceStatus(b)}
-                        style={{ flex: 1, marginLeft: 6, borderColor: Palette.primary }}
-                        textStyle={{ color: Palette.primary }}
-                        size="sm"
-                      />
-                    </>
-                  ) : b.status === 'on_the_way' ? (
-                    <>
-                      <Button
-                        title="Complete Order"
-                        onPress={() => handleDirectCompleteOrder(b)}
-                        style={{ flex: 1.2, marginLeft: 8, backgroundColor: Palette.accent }}
-                        size="sm"
-                      />
-                      <Button
-                        title="Start Service"
-                        onPress={() => handleAdvanceStatus(b)}
-                        style={{ flex: 1, marginLeft: 6, backgroundColor: Palette.purple }}
-                        size="sm"
-                      />
-                    </>
-                  ) : (
+                  <View style={styles.addressBox}>
+                    <Ionicons name="location-outline" size={14} color={Palette.gray500} />
+                    <Text style={styles.addressText} numberOfLines={1}>
+                      {b.address?.street || 'Standard Address'}, {b.address?.city || ''}
+                    </Text>
+                  </View>
+
+                  {b.notes ? <Text style={styles.notesText}>Notes: &ldquo;{b.notes}&rdquo;</Text> : null}
+
+                  <View style={styles.requestActions}>
+                    <TouchableOpacity
+                      style={styles.chatCustomerBtn}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/chat/[id]',
+                          params: { id: b.id },
+                        })
+                      }
+                    >
+                      <Ionicons name="chatbubbles" size={15} color={Palette.primary} />
+                      <Text style={styles.chatCustomerText}>Chat</Text>
+                    </TouchableOpacity>
+
                     <Button
-                      title="⭐ Complete Job"
-                      onPress={() => handleAdvanceStatus(b)}
-                      style={{ flex: 1, marginLeft: 8, backgroundColor: Palette.accent }}
+                      title="Decline"
+                      variant="outline"
+                      onPress={() => handleOpenDeclineModal(b)}
+                      style={styles.actionBtnSecondary}
+                      textStyle={{ color: Palette.danger }}
                       size="sm"
                     />
-                  )}
+                    <Button
+                      title="Accept Booking"
+                      onPress={() => handleAcceptBooking(b)}
+                      style={styles.actionBtnPrimary}
+                      size="sm"
+                    />
+                  </View>
                 </View>
+              ))
+            )}
+          </View>
+        )}
+
+        {/* ===================== SECTION 2: ACTIVE JOBS ===================== */}
+        {(selectedJobFilter === 'all' || selectedJobFilter === 'active') && (
+          <View style={{ marginBottom: 12 }}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Active Jobs ({activeJobs.length})</Text>
+            </View>
+
+            {activeJobs.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Ionicons name="briefcase-outline" size={32} color={Palette.gray400} />
+                <Text style={styles.emptyText}>No active jobs in progress</Text>
               </View>
-            ))
-          )}
+            ) : (
+              activeJobs.map((b) => (
+                <View key={b.id} style={styles.activeJobCard}>
+                  <TouchableOpacity
+                    style={styles.jobTopRow}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/booking/[id]',
+                        params: { id: b.id },
+                      })
+                    }
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.serviceName}>{b.serviceTitle}</Text>
+                      <Text style={styles.customerName}>For: {b.customerName}</Text>
+                      <Text style={styles.scheduleText}>
+                        {b.date} • {b.timeSlot}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                      <Badge status={b.status} />
+                      <Text style={{ fontSize: 11, color: Palette.primary, fontWeight: '600' }}>
+                        Details ›
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <View style={styles.jobActionsRow}>
+                    <TouchableOpacity
+                      style={styles.chatCustomerBtn}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/chat/[id]',
+                          params: { id: b.id },
+                        })
+                      }
+                    >
+                      <Ionicons name="chatbubbles" size={16} color={Palette.primary} />
+                      <Text style={styles.chatCustomerText}>Chat</Text>
+                    </TouchableOpacity>
+
+                    {b.status === 'accepted' ? (
+                      <>
+                        <Button
+                          title="Complete Order"
+                          onPress={() => handleDirectCompleteOrder(b)}
+                          style={[styles.actionBtnFlex, { backgroundColor: Palette.accent }]}
+                          size="sm"
+                        />
+                        <Button
+                          title="On The Way"
+                          variant="outline"
+                          onPress={() => handleAdvanceStatus(b)}
+                          style={[styles.actionBtnFlex, { borderColor: Palette.primary }]}
+                          textStyle={{ color: Palette.primary }}
+                          size="sm"
+                        />
+                      </>
+                    ) : b.status === 'on_the_way' ? (
+                      <>
+                        <Button
+                          title="Complete Order"
+                          onPress={() => handleDirectCompleteOrder(b)}
+                          style={[styles.actionBtnFlex, { backgroundColor: Palette.accent }]}
+                          size="sm"
+                        />
+                        <Button
+                          title="Start Service"
+                          onPress={() => handleAdvanceStatus(b)}
+                          style={[styles.actionBtnFlex, { backgroundColor: Palette.purple }]}
+                          size="sm"
+                        />
+                      </>
+                    ) : (
+                      <Button
+                        title="⭐ Complete Job"
+                        onPress={() => handleAdvanceStatus(b)}
+                        style={[styles.actionBtnFlex, { backgroundColor: Palette.accent }]}
+                        size="sm"
+                      />
+                    )}
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        )}
+
+        {/* ===================== SECTION 3: COMPLETED ORDERS ===================== */}
+        {(selectedJobFilter === 'all' || selectedJobFilter === 'completed') && (
+          <View style={{ marginBottom: 16 }}>
+            <View style={styles.sectionHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="checkmark-done-circle" size={20} color="#059669" />
+                <Text style={styles.sectionTitle}>Completed Orders ({completedJobs.length})</Text>
+              </View>
+            </View>
+
+            {completedJobs.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Ionicons name="checkmark-done-circle-outline" size={36} color={Palette.gray400} />
+                <Text style={styles.emptyText}>No completed jobs yet</Text>
+                <Text style={{ fontSize: 12, color: Palette.gray500, marginTop: 4, textAlign: 'center' }}>
+                  Orders you accept and finish will be permanently logged here.
+                </Text>
+              </View>
+            ) : (
+              completedJobs.map((b) => (
+                <View key={b.id} style={styles.completedJobCard}>
+                  <View style={styles.jobTopRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.serviceName}>{b.serviceTitle}</Text>
+                      <Text style={styles.customerName}>Customer: {b.customerName}</Text>
+                      <Text style={styles.scheduleText}>
+                        Completed on {b.date} • {b.timeSlot}
+                      </Text>
+                    </View>
+                    <View style={styles.completedBadgeContainer}>
+                      <View style={styles.completedStatusBadge}>
+                        <Ionicons name="checkmark-circle" size={13} color="#047857" />
+                        <Text style={styles.completedStatusText}>COMPLETED</Text>
+                      </View>
+                      <Text style={styles.completedPriceText}>+${b.totalPrice}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.addressBox}>
+                    <Ionicons name="location-outline" size={14} color={Palette.gray500} />
+                    <Text style={styles.addressText} numberOfLines={1}>
+                      {b.address?.street || 'Standard Address'}, {b.address?.city || ''}
+                    </Text>
+                  </View>
+
+                  <View style={styles.completedActionsRow}>
+                    <TouchableOpacity
+                      style={styles.chatCustomerBtn}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/chat/[id]',
+                          params: { id: b.id },
+                        })
+                      }
+                    >
+                      <Ionicons name="chatbubbles" size={15} color={Palette.primary} />
+                      <Text style={styles.chatCustomerText}>Chat with Customer</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.viewOrderSummaryBtn}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/booking/[id]',
+                          params: { id: b.id },
+                        })
+                      }
+                    >
+                      <Ionicons name="document-text-outline" size={15} color={Palette.gray700} />
+                      <Text style={styles.viewOrderSummaryText}>Order Summary</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        )}
 
         {/* Provider Profile Summary & Sign Out Section */}
         <View style={styles.providerAccountCard}>
@@ -632,78 +893,21 @@ export default function ProviderDashboardScreen() {
         </View>
       </Modal>
 
-      {/* Customer Chats Modal */}
-      <Modal
-        visible={chatsModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setChatsModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxHeight: '82%' }]}>
-            <View style={styles.modalHeaderRow}>
-              <View style={styles.modalHeaderLeft}>
-                <Ionicons name="chatbubbles" size={22} color={Palette.primary} />
-                <Text style={styles.modalTitle}>Customer Chats ({customerChatsList.length})</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setChatsModalVisible(false)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close" size={20} color={Palette.gray500} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false} style={{ marginVertical: 10 }}>
-              {customerChatsList.length === 0 ? (
-                <View style={styles.emptyBox}>
-                  <Ionicons name="chatbubbles-outline" size={36} color={Palette.gray400} />
-                  <Text style={styles.emptyText}>No customer conversations yet</Text>
-                </View>
-              ) : (
-                customerChatsList.map((chatBooking) => (
-                  <TouchableOpacity
-                    key={chatBooking.id}
-                    style={styles.chatListItem}
-                    onPress={() => {
-                      setChatsModalVisible(false);
-                      router.push({
-                        pathname: '/chat/[id]',
-                        params: { id: chatBooking.id },
-                      });
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.chatListAvatar}>
-                      <Ionicons name="person" size={18} color={Palette.primary} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.chatListTopRow}>
-                        <Text style={styles.chatListCustomer}>{chatBooking.customerName}</Text>
-                        <Badge status={chatBooking.status} />
-                      </View>
-                      <Text style={styles.chatListService} numberOfLines={1}>
-                        {chatBooking.serviceTitle}
-                      </Text>
-                      <Text style={styles.chatListDate}>
-                        📅 {chatBooking.date} • {chatBooking.timeSlot}
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={Palette.gray400} />
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
-
-            <Button
-              title="Close"
-              variant="outline"
-              onPress={() => setChatsModalVisible(false)}
-              size="sm"
-            />
-          </View>
-        </View>
-      </Modal>
+      {/* Live Chat & Support Popup Widget (matching exact screenshot design) */}
+      <LiveChatPopupWidget
+        isOpen={chatsModalVisible}
+        onToggle={() => {
+          if (chatsModalVisible) {
+            setChatsModalVisible(false);
+          } else {
+            handleOpenChatsModal();
+          }
+        }}
+        customerChatsList={customerChatsList}
+        unreadCount={unreadChatCount}
+        currentUserId={user?.id || 'prov-1'}
+        currentUserName={user?.name || 'Service Provider'}
+      />
     </SafeAreaView>
   );
 }
@@ -775,6 +979,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     backgroundColor: '#FEE2E2',
     borderRadius: BorderRadius.md,
+  },
+  logoutBtnCompact: {
+    paddingHorizontal: 6,
+    paddingVertical: 5,
+    gap: 2,
   },
   logoutBtnText: {
     fontSize: 12,
@@ -864,13 +1073,17 @@ const styles = StyleSheet.create({
   },
   navCard: {
     flex: 1,
-    minWidth: 100,
+    minWidth: 95,
     backgroundColor: Palette.white,
     padding: Spacing.three,
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
     borderColor: Palette.gray200,
     ...Shadows.sm,
+  },
+  navCardNarrow: {
+    minWidth: '47%',
+    flexBasis: '47%',
   },
   navCardIcon: {
     width: 38,
@@ -906,6 +1119,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Palette.gray200,
     ...Shadows.sm,
+  },
+  metricCardNarrow: {
+    flexBasis: '47%',
+    flexGrow: 1,
   },
   metricNumber: {
     fontSize: 18,
@@ -994,6 +1211,9 @@ const styles = StyleSheet.create({
   },
   requestActions: {
     flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
     marginTop: 8,
   },
   activeJobCard: {
@@ -1019,6 +1239,22 @@ const styles = StyleSheet.create({
   jobActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  actionBtnFlex: {
+    flex: 1,
+    minWidth: 105,
+  },
+  actionBtnSecondary: {
+    flex: 1,
+    minWidth: 80,
+    borderColor: Palette.danger,
+  },
+  actionBtnPrimary: {
+    flex: 1.3,
+    minWidth: 115,
   },
   chatCustomerBtn: {
     flexDirection: 'row',
@@ -1218,5 +1454,144 @@ const styles = StyleSheet.create({
   chatListDate: {
     fontSize: 10,
     color: Palette.gray500,
+  },
+  metricCardActive: {
+    borderColor: Palette.primary,
+    backgroundColor: '#EFF6FF',
+  },
+  completedMetricCard: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  completedMetricCardActive: {
+    borderColor: '#059669',
+    backgroundColor: '#DCFCE7',
+  },
+  metricIconHeader: {
+    marginBottom: 4,
+  },
+  filterPillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginVertical: Spacing.two,
+  },
+  filterPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Palette.white,
+    borderWidth: 1,
+    borderColor: Palette.gray200,
+  },
+  filterPillActive: {
+    backgroundColor: Palette.primary,
+    borderColor: Palette.primary,
+  },
+  filterPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Palette.gray700,
+  },
+  filterPillTextActive: {
+    color: Palette.white,
+  },
+  completedFilterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  completedFilterPillActive: {
+    backgroundColor: '#059669',
+    borderColor: '#059669',
+  },
+  completedJobCard: {
+    backgroundColor: Palette.white,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.three,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    marginBottom: Spacing.two,
+    ...Shadows.sm,
+  },
+  completedBadgeContainer: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  completedStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#DEF7EC',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.full,
+  },
+  completedStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#03543F',
+  },
+  completedPriceText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  completedActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+  },
+  viewOrderSummaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: Palette.gray100,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Palette.gray200,
+  },
+  viewOrderSummaryText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Palette.gray700,
+  },
+  chatFab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: Palette.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadows.lg,
+    elevation: 8,
+    zIndex: 999,
+  },
+  fabBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: Palette.danger,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: Palette.white,
+  },
+  fabBadgeText: {
+    color: Palette.white,
+    fontSize: 10,
+    fontWeight: '800',
   },
 });

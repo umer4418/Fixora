@@ -16,6 +16,14 @@ import { AppNotification } from '../types';
 export default function NotificationsScreen() {
   const { notifications, markNotificationRead, markAllNotificationsRead } = useMarketplace();
 
+  // Automatically mark notifications as read once viewed
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      markAllNotificationsRead();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [markAllNotificationsRead]);
+
   const handleNotificationPress = async (notif: AppNotification) => {
     await markNotificationRead(notif.id);
     if (notif.bookingId) {

@@ -8,7 +8,7 @@ import { MarketplaceProvider } from '../context/MarketplaceContext';
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function NavigationGuard({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, activeRole, isLoading } = useAuth();
   const segments = useSegments();
 
   useEffect(() => {
@@ -27,11 +27,13 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const effectiveRole = activeRole || user?.role;
+
     // 2. Authenticated users attempting to visit auth screens: redirect to their assigned portal
     if (user && firstSegment === 'auth') {
-      if (user.role === 'admin') {
+      if (effectiveRole === 'admin') {
         router.replace('/admin-portal');
-      } else if (user.role === 'provider') {
+      } else if (effectiveRole === 'provider') {
         router.replace('/provider-portal');
       } else {
         router.replace('/(tabs)/home');
@@ -40,23 +42,23 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
     }
 
     // 3. Customer trying to access admin portal or provider portal: redirect to customer home
-    if (user && user.role === 'customer' && (firstSegment === 'admin-portal' || firstSegment === 'provider-portal')) {
+    if (effectiveRole === 'customer' && (firstSegment === 'admin-portal' || firstSegment === 'provider-portal')) {
       router.replace('/(tabs)/home');
       return;
     }
 
     // 4. Provider trying to access admin portal: redirect to provider portal
-    if (user && user.role === 'provider' && firstSegment === 'admin-portal') {
+    if (effectiveRole === 'provider' && firstSegment === 'admin-portal') {
       router.replace('/provider-portal');
       return;
     }
 
     // 5. Admin trying to access provider portal: redirect to admin portal
-    if (user && user.role === 'admin' && firstSegment === 'provider-portal') {
+    if (effectiveRole === 'admin' && firstSegment === 'provider-portal') {
       router.replace('/admin-portal');
       return;
     }
-  }, [user, isLoading, segments]);
+  }, [user, activeRole, isLoading, segments]);
 
   return <>{children}</>;
 }

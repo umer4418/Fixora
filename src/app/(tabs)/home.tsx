@@ -20,7 +20,7 @@ import { ProviderCard } from '../../components/marketplace/ProviderCard';
 import { AddressSelectorModal } from '../../components/marketplace/AddressSelectorModal';
 
 export default function HomeScreen() {
-  const { categories, services, providers, bookings, refreshAll } = useMarketplace();
+  const { categories, services, providers, bookings, notifications, refreshAll } = useMarketplace();
   const [addressModalVisible, setAddressModalVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
@@ -48,6 +48,17 @@ export default function HomeScreen() {
   const activeBooking = bookings.find(
     (b) => b.status === 'in_progress' || b.status === 'accepted' || b.status === 'on_the_way'
   );
+
+  const activeBookingUnreadChat = useMemo(() => {
+    if (!activeBooking) return false;
+    return notifications.some(
+      (n) =>
+        n.type === 'chat' &&
+        !n.read &&
+        (n.bookingId === activeBooking.id ||
+          (activeBooking.orderId && n.bookingId === activeBooking.orderId))
+    );
+  }, [activeBooking, notifications]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -78,7 +89,7 @@ export default function HomeScreen() {
             style={styles.activeBookingCard}
             onPress={() =>
               router.push({
-                pathname: '/booking/[id]',
+                pathname: activeBookingUnreadChat ? '/chat/[id]' : '/booking/[id]',
                 params: { id: activeBooking.id },
               })
             }
@@ -89,6 +100,12 @@ export default function HomeScreen() {
               <Text style={styles.activeBookingTitle}>
                 Active Service: {activeBooking.serviceTitle}
               </Text>
+              {activeBookingUnreadChat && (
+                <View style={styles.activeChatBadgePill}>
+                  <Ionicons name="chatbubble-ellipses" size={12} color="#FFFFFF" />
+                  <Text style={styles.activeChatBadgeText}>New message</Text>
+                </View>
+              )}
               <Ionicons name="chevron-forward" size={16} color={Palette.white} />
             </View>
             <Text style={styles.activeBookingSub}>
@@ -370,6 +387,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     flex: 1,
+  },
+  activeChatBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.full,
+    marginRight: 8,
+  },
+  activeChatBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
   },
   activeBookingSub: {
     color: Palette.gray300,

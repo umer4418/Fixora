@@ -23,6 +23,8 @@ import { Badge } from '../../components/common/Badge';
 import { Button } from '../../components/common/Button';
 import { ReviewModal } from '../../components/marketplace/ReviewModal';
 import { getBookingById } from '../../services/marketplaceService';
+import { StripePaymentModal } from '../../components/payment/StripePaymentModal';
+import { StripePaymentResult } from '../../services/stripeService';
 
 const STATUS_STEPS: { key: BookingStatus; label: string; desc: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'pending', label: 'Requested', desc: 'Awaiting provider confirmation', icon: 'time-outline' },
@@ -40,12 +42,29 @@ const DECLINE_REASONS = [
   'Other reason',
 ];
 
+const CUSTOMER_CANCEL_REASONS = [
+  'Change of plans / No longer needed',
+  'Found another service provider',
+  'Booked by mistake / Wrong service selected',
+  'Schedule conflict / Need different date or time',
+  'Provider taking too long to respond',
+  'Price / Budget concerns',
+  'Other reason',
+];
+
 export default function BookingDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const { user } = useAuth();
-  const { bookings, changeBookingStatus, respondToOrder } = useMarketplace();
+  const rawParams = useLocalSearchParams<{ id: string }>();
+  const rawId = Array.isArray(rawParams.id) ? rawParams.id[0] : (rawParams.id || '');
+  const id = rawId ? decodeURIComponent(String(rawId).trim()) : '';
+
+  const { user, activeRole } = useAuth();
+  const effectiveRole = activeRole || user?.role || 'customer';
+  const isProvider = effectiveRole === 'provider';
+
+  const { bookings, changeBookingStatus, respondToOrder, notifications, payBookingWithStripe } = useMarketplace();
 
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [stripeModalVisible, setStripeModalVisible] = useState(false);
   const [fetchedBooking, setFetchedBooking] = useState<Booking | null>(null);
   const [isLoadingBooking, setIsLoadingBooking] = useState<boolean>(true);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
@@ -56,12 +75,38 @@ export default function BookingDetailScreen() {
   const [customDeclineNote, setCustomDeclineNote] = useState<string>('');
   const [isSubmittingDecline, setIsSubmittingDecline] = useState<boolean>(false);
 
+  // Customer Cancellation Modal state
+  const [cancelModalVisible, setCancelModalVisible] = useState<boolean>(false);
+  const [selectedCancelReason, setSelectedCancelReason] = useState<string>(CUSTOMER_CANCEL_REASONS[0]);
+  const [customCancelNote, setCustomCancelNote] = useState<string>('');
+  const [isSubmittingCancel, setIsSubmittingCancel] = useState<boolean>(false);
+
   // Match from context memory first (fastest)
   const contextBooking = useMemo(() => {
-    return bookings.find((b) => b.id === id || b.orderId === id || b.bookingId === id);
+    if (!id) return null;
+    const cleanId = id.toLowerCase();
+    return (
+      bookings.find(
+        (b) =>
+          (b.id && b.id.toLowerCase() === cleanId) ||
+          (b.orderId && b.orderId.toLowerCase() === cleanId) ||
+          (b.bookingId && b.bookingId.toLowerCase() === cleanId)
+      ) || null
+    );
   }, [bookings, id]);
 
   const booking = contextBooking || fetchedBooking;
+
+  // Unread chat messages count for this booking
+  const unreadChatCount = useMemo(() => {
+    if (!booking) return 0;
+    return notifications.filter(
+      (n) =>
+        n.type === 'chat' &&
+        !n.read &&
+        (n.bookingId === booking.id || (booking.orderId && n.bookingId === booking.orderId))
+    ).length;
+  }, [booking, notifications]);
 
   // Asynchronous fallback fetch if not present in context state
   useEffect(() => {
@@ -79,7 +124,7 @@ export default function BookingDetailScreen() {
 
       setIsLoadingBooking(true);
       try {
-        const result = await getBookingById(id, user?.id, user?.role);
+        const result = await getBookingById(id, user?.id, effectiveRole);
         if (isMounted && result) {
           setFetchedBooking(result);
         }
@@ -96,29 +141,13 @@ export default function BookingDetailScreen() {
     return () => {
       isMounted = false;
     };
-  }, [id, contextBooking, user?.id, user?.role]);
+  }, [id, contextBooking, user?.id, effectiveRole]);
 
   // Authorization validation
   const isAuthorized = useMemo(() => {
     if (!booking) return false;
-    if (!user) return true; // Guest / preview
-    if (user.role === 'admin') return true;
-    if (user.role === 'provider') return true;
-    // Customer role: allow matching customer or device session
-    if (user.role === 'customer') {
-      return (
-        booking.userId === user.id ||
-        booking.customerId === user.id ||
-        (user.email && booking.customerEmail && booking.customerEmail.toLowerCase() === user.email.toLowerCase()) ||
-        user.id === 'cust-demo' ||
-        booking.customerId === 'cust-demo' ||
-        true // Allow user on device who received the booking notification
-      );
-    }
     return true;
-  }, [booking, user]);
-
-  const isProvider = user?.role === 'provider' || (booking && (booking.providerId === user?.id || booking.providerId === 'prov-1'));
+  }, [booking]);
 
   if (isLoadingBooking && !booking) {
     return (
@@ -147,6 +176,37 @@ export default function BookingDetailScreen() {
   }
 
   const isCancelled = booking.status === 'cancelled';
+  const isPaid = (booking.paymentStatus || '').toLowerCase() === 'paid';
+
+  const handleOnlinePaymentSuccess = async (stripeRes: StripePaymentResult) => {
+    try {
+      const paymentIntentId = stripeRes.paymentIntentId || '';
+      const ok = await payBookingWithStripe(booking.id, {
+        stripePaymentId: paymentIntentId,
+        stripeChargeId: stripeRes.chargeId,
+        stripeReceiptUrl: stripeRes.receiptUrl,
+      });
+      if (ok && fetchedBooking) {
+        setFetchedBooking({
+          ...fetchedBooking,
+          paymentStatus: 'paid',
+          paymentMethod: 'card',
+          stripePaymentId: stripeRes.paymentIntentId,
+          stripeChargeId: stripeRes.chargeId,
+          stripeReceiptUrl: stripeRes.receiptUrl,
+        });
+      }
+      const successMsg = `Your payment of $${booking.totalPrice} has been confirmed via Stripe.\n\nTransaction ID: ${stripeRes.paymentIntentId}`;
+      if (Platform.OS === 'web') {
+        alert(`Payment Successful!\n\n${successMsg}`);
+      } else {
+        Alert.alert('Payment Successful! 🎉', successMsg);
+      }
+    } catch (e: any) {
+      console.warn('Stripe payment update error:', e);
+      Alert.alert('Payment Recorded', `Stripe transaction ${stripeRes.paymentIntentId} recorded.`);
+    }
+  };
 
   const getCurrentStepIndex = () => {
     if (isCancelled) return -1;
@@ -156,31 +216,32 @@ export default function BookingDetailScreen() {
 
   const currentStepIdx = getCurrentStepIndex();
 
-  const handleCancelBooking = async () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      const confirmed = window.confirm('Are you sure you want to cancel this booking?');
-      if (confirmed) {
-        await changeBookingStatus(booking.id, 'cancelled', 'Cancelled by customer');
-        alert('Booking has been cancelled.');
-      }
-      return;
-    }
+  const handleCancelBooking = () => {
+    setSelectedCancelReason(CUSTOMER_CANCEL_REASONS[0]);
+    setCustomCancelNote('');
+    setCancelModalVisible(true);
+  };
 
-    Alert.alert(
-      'Cancel Booking',
-      'Are you sure you want to cancel this booking?',
-      [
-        { text: 'Keep Booking', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            await changeBookingStatus(booking.id, 'cancelled', 'Cancelled by customer');
-            alert('Booking has been cancelled.');
-          },
-        },
-      ]
-    );
+  const handleConfirmCancel = async () => {
+    setIsSubmittingCancel(true);
+    const reason =
+      selectedCancelReason === 'Other reason' && customCancelNote.trim()
+        ? customCancelNote.trim()
+        : selectedCancelReason;
+
+    try {
+      await changeBookingStatus(booking.id, 'cancelled', reason);
+      setCancelModalVisible(false);
+      if (Platform.OS === 'web') {
+        alert('Your booking has been cancelled.');
+      } else {
+        Alert.alert('Booking Cancelled', 'Your booking has been cancelled.');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to cancel booking');
+    } finally {
+      setIsSubmittingCancel(false);
+    }
   };
 
   const handleOpenChat = () => {
@@ -259,6 +320,13 @@ export default function BookingDetailScreen() {
         <Text style={styles.navTitle}>Order #{booking.id.slice(-6).toUpperCase()}</Text>
         <TouchableOpacity onPress={handleOpenChat} style={styles.navBtn}>
           <Ionicons name="chatbubble-ellipses-outline" size={22} color={Palette.primary} />
+          {unreadChatCount > 0 && (
+            <View style={styles.chatNavBadge}>
+              <Text style={styles.chatNavBadgeText}>
+                {unreadChatCount > 9 ? '9+' : unreadChatCount}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -387,12 +455,15 @@ export default function BookingDetailScreen() {
             </View>
 
             <TouchableOpacity
-              style={styles.chatActionBtn}
+              style={[styles.chatActionBtn, unreadChatCount > 0 && styles.chatActionBtnWithUnread]}
               onPress={handleOpenChat}
               activeOpacity={0.7}
             >
               <Ionicons name="chatbubble" size={16} color={Palette.white} />
-              <Text style={styles.chatActionText}>Chat</Text>
+              <Text style={styles.chatActionText}>
+                {unreadChatCount > 0 ? `Chat (${unreadChatCount})` : 'Chat'}
+              </Text>
+              {unreadChatCount > 0 && <View style={styles.chatActionBadgeDot} />}
             </TouchableOpacity>
           </View>
         )}
@@ -452,21 +523,36 @@ export default function BookingDetailScreen() {
             <Text style={styles.infoValue}>
               {booking.paymentMethod === 'cash' || booking.paymentMethod === 'Cash on Delivery'
                 ? 'Cash / Pay After Service'
-                : 'Credit / Debit Card'}
+                : 'Credit / Debit Card (Stripe)'}
             </Text>
           </View>
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Payment Status:</Text>
-            <Text
-              style={[
-                styles.infoValue,
-                { color: booking.paymentStatus === 'paid' || booking.paymentStatus === 'Paid' ? Palette.accent : Palette.warning },
-              ]}
-            >
-              {(booking.paymentStatus || 'Pending').toUpperCase()}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {isPaid && <Ionicons name="checkmark-circle" size={16} color={Palette.accent} />}
+              <Text
+                style={[
+                  styles.infoValue,
+                  { color: isPaid ? Palette.accent : Palette.warning, fontWeight: '700' },
+                ]}
+              >
+                {(booking.paymentStatus || 'Pending').toUpperCase()}
+              </Text>
+            </View>
           </View>
+
+          {booking.stripePaymentId ? (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Stripe Transaction:</Text>
+              <Text
+                style={[styles.infoValue, { fontSize: 11, color: '#635BFF', fontWeight: '700' }]}
+                numberOfLines={1}
+              >
+                {booking.stripePaymentId}
+              </Text>
+            </View>
+          ) : null}
 
           <View style={styles.divider} />
 
@@ -474,6 +560,24 @@ export default function BookingDetailScreen() {
             <Text style={styles.totalLabel}>Total Price</Text>
             <Text style={styles.totalValue}>${booking.totalPrice}</Text>
           </View>
+
+          {/* Quick Pay with Stripe banner if customer & unpaid & not cancelled */}
+          {!isProvider && !isPaid && !isCancelled && (
+            <TouchableOpacity
+              style={styles.stripePayBanner}
+              onPress={() => setStripeModalVisible(true)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.stripePayBannerIcon}>
+                <Ionicons name="card" size={20} color={Palette.white} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.stripePayBannerTitle}>Pay ${booking.totalPrice} Online Now</Text>
+                <Text style={styles.stripePayBannerSubtitle}>Powered by Stripe 256-bit secure checkout</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#635BFF" />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Action Buttons Section */}
@@ -590,6 +694,16 @@ export default function BookingDetailScreen() {
           ) : (
             /* CUSTOMER WORKFLOW BUTTONS */
             <View style={{ gap: 12 }}>
+              {!isPaid && !isCancelled && (
+                <Button
+                  title={`Pay $${booking.totalPrice} Online with Stripe`}
+                  onPress={() => setStripeModalVisible(true)}
+                  icon="card"
+                  size="lg"
+                  style={{ backgroundColor: '#635BFF' }}
+                />
+              )}
+
               <Button
                 title="Chat with Provider"
                 variant="outline"
@@ -612,9 +726,11 @@ export default function BookingDetailScreen() {
 
               {(booking.status === 'pending' || booking.status === 'accepted') && (
                 <Button
-                  title="Cancel Booking"
+                  title="Cancel Order"
                   variant="outline"
                   onPress={handleCancelBooking}
+                  icon="close-circle-outline"
+                  size="lg"
                   style={{ borderColor: Palette.danger }}
                   textStyle={{ color: Palette.danger }}
                 />
@@ -700,6 +816,92 @@ export default function BookingDetailScreen() {
         </View>
       </Modal>
 
+      {/* Customer Cancellation Reason Modal */}
+      <Modal
+        visible={cancelModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCancelModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={[styles.modalIconBox, { backgroundColor: '#FEE2E2' }]}>
+                <Ionicons name="close-circle" size={24} color={Palette.danger} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Cancel Service Order</Text>
+                <Text style={styles.modalSub}>
+                  Please let us know why you are cancelling this booking.
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setCancelModalVisible(false)}>
+                <Ionicons name="close" size={22} color={Palette.gray500} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSectionLabel}>Reason for cancellation:</Text>
+            {CUSTOMER_CANCEL_REASONS.map((reason) => {
+              const isSelected = selectedCancelReason === reason;
+              return (
+                <TouchableOpacity
+                  key={reason}
+                  style={[styles.reasonOption, isSelected && styles.reasonOptionSelected]}
+                  onPress={() => setSelectedCancelReason(reason)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                    size={18}
+                    color={isSelected ? Palette.danger : Palette.gray400}
+                  />
+                  <Text style={[styles.reasonText, isSelected && styles.reasonTextSelected]}>
+                    {reason}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+
+            {selectedCancelReason === 'Other reason' && (
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Please state why you are cancelling..."
+                placeholderTextColor={Palette.gray400}
+                value={customCancelNote}
+                onChangeText={setCustomCancelNote}
+                multiline
+                numberOfLines={3}
+              />
+            )}
+
+            <View style={styles.modalBtnRow}>
+              <Button
+                title="Keep Order"
+                variant="outline"
+                onPress={() => setCancelModalVisible(false)}
+                style={{ flex: 1, marginRight: 8 }}
+              />
+              <Button
+                title="Confirm Cancel"
+                onPress={handleConfirmCancel}
+                loading={isSubmittingCancel}
+                style={{ flex: 1, backgroundColor: Palette.danger }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <StripePaymentModal
+        visible={stripeModalVisible}
+        onClose={() => setStripeModalVisible(false)}
+        amount={Number(booking.totalPrice) || 0}
+        serviceTitle={booking.serviceTitle || booking.serviceName || 'Fixora Service'}
+        customerName={booking.customerName || user?.name || ''}
+        customerEmail={booking.customerEmail || user?.email || ''}
+        onPaymentSuccess={handleOnlinePaymentSuccess}
+      />
+
       <ReviewModal
         visible={reviewModalVisible}
         booking={booking}
@@ -746,6 +948,36 @@ const styles = StyleSheet.create({
   },
   navBtn: {
     padding: 4,
+    position: 'relative',
+  },
+  chatNavBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: Palette.danger,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: Palette.white,
+  },
+  chatNavBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  chatActionBtnWithUnread: {
+    backgroundColor: Palette.accent,
+  },
+  chatActionBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FFFFFF',
+    marginLeft: 2,
   },
   navTitle: {
     fontSize: 16,
@@ -1134,5 +1366,34 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     maxWidth: 280,
+  },
+  stripePayBanner: {
+    marginTop: Spacing.three,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1.5,
+    borderColor: '#C7D2FE',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.three,
+  },
+  stripePayBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#635BFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripePayBannerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#312E81',
+  },
+  stripePayBannerSubtitle: {
+    fontSize: 11,
+    color: '#6366F1',
+    marginTop: 2,
   },
 });

@@ -395,17 +395,47 @@ export function normalizeOrderDoc(docId: string, data: any): Booking {
       ? data.totalAmount
       : data.price || 0;
 
+  const rawStatus = String(data.status || '').toLowerCase().trim();
+  const rawOrderStatus = String(data.orderStatus || '').toLowerCase().trim();
+  const rawBookingStatus = String(data.bookingStatus || '').toLowerCase().trim();
+
   let effectiveStatus: BookingStatus = 'pending';
-  if (data.status) {
-    effectiveStatus = data.status as BookingStatus;
-  } else if (data.orderStatus) {
-    const lower = String(data.orderStatus).toLowerCase();
-    if (lower === 'placed') effectiveStatus = 'pending';
-    else if (lower === 'processing') effectiveStatus = 'in_progress';
-    else if (lower === 'accepted') effectiveStatus = 'accepted';
-    else if (lower === 'on_the_way' || lower === 'on the way') effectiveStatus = 'on_the_way';
-    else if (lower === 'completed') effectiveStatus = 'completed';
-    else if (lower === 'cancelled') effectiveStatus = 'cancelled';
+  if (rawStatus === 'placed' || rawStatus === 'pending') {
+    effectiveStatus = 'pending';
+  } else if (rawStatus === 'accepted' || rawStatus === 'confirmed') {
+    effectiveStatus = 'accepted';
+  } else if (rawStatus === 'on_the_way' || rawStatus === 'on the way' || rawStatus === 'ontheway') {
+    effectiveStatus = 'on_the_way';
+  } else if (rawStatus === 'in_progress' || rawStatus === 'inprogress' || rawStatus === 'processing') {
+    effectiveStatus = 'in_progress';
+  } else if (rawStatus === 'completed' || rawStatus === 'finished' || rawStatus === 'done') {
+    effectiveStatus = 'completed';
+  } else if (rawStatus === 'cancelled' || rawStatus === 'canceled' || rawStatus === 'rejected' || rawStatus === 'declined') {
+    effectiveStatus = 'cancelled';
+  } else if (rawOrderStatus) {
+    if (rawOrderStatus === 'placed' || rawOrderStatus === 'pending' || rawOrderStatus === 'pending provider acceptance') {
+      effectiveStatus = 'pending';
+    } else if (rawOrderStatus === 'accepted' || rawOrderStatus === 'confirmed') {
+      effectiveStatus = 'accepted';
+    } else if (rawOrderStatus === 'processing' || rawOrderStatus === 'in_progress') {
+      effectiveStatus = 'in_progress';
+    } else if (rawOrderStatus === 'on_the_way' || rawOrderStatus === 'on the way') {
+      effectiveStatus = 'on_the_way';
+    } else if (rawOrderStatus === 'completed') {
+      effectiveStatus = 'completed';
+    } else if (rawOrderStatus === 'cancelled' || rawOrderStatus === 'canceled' || rawOrderStatus === 'rejected' || rawOrderStatus === 'declined') {
+      effectiveStatus = 'cancelled';
+    }
+  } else if (rawBookingStatus) {
+    if (rawBookingStatus === 'placed' || rawBookingStatus === 'pending') {
+      effectiveStatus = 'pending';
+    } else if (rawBookingStatus === 'accepted') {
+      effectiveStatus = 'accepted';
+    } else if (rawBookingStatus === 'completed') {
+      effectiveStatus = 'completed';
+    } else if (rawBookingStatus === 'cancelled' || rawBookingStatus === 'declined') {
+      effectiveStatus = 'cancelled';
+    }
   }
 
   const items =
@@ -504,17 +534,58 @@ export function subscribeToOrders(
 
     const unsub = onSnapshot(
       q,
-      (snapshot) => {
-        const list = snapshot.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      async (snapshot) => {
+        try {
+          const remoteList = snapshot.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
 
-        // Cache locally for offline availability
-        const userKey = getUserStorageKey(KEYS.BOOKINGS, userId);
-        const ordersUserKey = getUserStorageKey(KEYS.ORDERS, userId);
-        saveStored(userKey, list);
-        saveStored(ordersUserKey, list);
+          // Merge with locally stored device orders so unsynced device orders are NEVER lost
+          const userKey = getUserStorageKey(KEYS.BOOKINGS, userId);
+          const ordersUserKey = getUserStorageKey(KEYS.ORDERS, userId);
+          const localOrders = await getStoredList<Booking>(ordersUserKey);
+          const localBookings = await getStoredList<Booking>(userKey);
+          const globalOrders = await getStoredList<Booking>(KEYS.ORDERS);
+          const globalBookings = await getStoredList<Booking>(KEYS.BOOKINGS);
 
-        onUpdate(list);
+          const orderMap = new Map<string, Booking>();
+          for (const r of remoteList) {
+            if (r && r.id) orderMap.set(r.id, r);
+          }
+
+          for (const loc of [...localOrders, ...localBookings, ...globalOrders, ...globalBookings]) {
+            if (!loc || !loc.id) continue;
+            if (!orderMap.has(loc.id)) {
+              if (role === 'provider') {
+                if (loc.providerId === userId || loc.providerId === 'prov-1' || !loc.providerId || userId === 'prov-1') {
+                  orderMap.set(loc.id, loc);
+                }
+              } else if (role === 'customer') {
+                if (loc.userId === userId || loc.customerId === userId || userId === 'cust-demo' || !loc.userId) {
+                  orderMap.set(loc.id, loc);
+                }
+              } else {
+                orderMap.set(loc.id, loc);
+              }
+            } else {
+              const existing = orderMap.get(loc.id)!;
+              const locTime = new Date(loc.updatedAt || loc.createdAt).getTime();
+              const existTime = new Date(existing.updatedAt || existing.createdAt).getTime();
+              if (locTime > existTime) {
+                orderMap.set(loc.id, loc);
+              }
+            }
+          }
+
+          const merged = Array.from(orderMap.values()).sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+
+          saveStored(userKey, merged);
+          saveStored(ordersUserKey, merged);
+          onUpdate(merged);
+        } catch {
+          const fallbackList = snapshot.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
+          onUpdate(fallbackList);
+        }
       },
       async (error) => {
         logFallback('subscribeToOrders', error);
@@ -547,10 +618,10 @@ export async function getBookings(userId?: string, role?: UserRole): Promise<Boo
   const userKey = getUserStorageKey(KEYS.BOOKINGS, userId);
   const ordersUserKey = getUserStorageKey(KEYS.ORDERS, userId);
 
+  let remoteOrders: Booking[] = [];
+
   if (isFirebaseConfigured() && db) {
     try {
-      let ordersList: Booking[] = [];
-
       // 1. Primary query on central 'orders' collection
       let qOrders;
       if (role === 'admin') {
@@ -565,21 +636,22 @@ export async function getBookings(userId?: string, role?: UserRole): Promise<Boo
         qOrders = query(collection(db, 'orders'), where('userId', '==', userId));
       }
 
-      const snapOrders = await withTimeout(getDocs(qOrders));
+      const snapOrders = await withTimeout(getDocs(qOrders), 2500);
       if (!snapOrders.empty) {
-        ordersList = snapOrders.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
+        remoteOrders = snapOrders.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
       } else if (role === 'customer') {
         // Check where('customerId', '==', userId) in 'orders'
         const snapCust = await withTimeout(
-          getDocs(query(collection(db, 'orders'), where('customerId', '==', userId)))
+          getDocs(query(collection(db, 'orders'), where('customerId', '==', userId))),
+          2000
         );
         if (!snapCust.empty) {
-          ordersList = snapCust.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
+          remoteOrders = snapCust.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
         }
       }
 
       // 2. Fallback: check legacy 'bookings' collection if 'orders' returned empty
-      if (ordersList.length === 0) {
+      if (remoteOrders.length === 0) {
         let qBookings;
         if (role === 'admin') {
           qBookings = collection(db, 'bookings');
@@ -592,158 +664,143 @@ export async function getBookings(userId?: string, role?: UserRole): Promise<Boo
         } else {
           qBookings = query(collection(db, 'bookings'), where('customerId', '==', userId));
         }
-        const snapBookings = await withTimeout(getDocs(qBookings));
+        const snapBookings = await withTimeout(getDocs(qBookings), 2000);
         if (!snapBookings.empty) {
-          ordersList = snapBookings.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
+          remoteOrders = snapBookings.docs.map((d) => normalizeOrderDoc(d.id, d.data()));
         }
-      }
-
-      if (ordersList.length > 0) {
-        ordersList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        await saveStored(userKey, ordersList);
-        await saveStored(ordersUserKey, ordersList);
-        return ordersList;
       }
     } catch (e) {
       logFallback('getBookings / getOrders', e);
     }
   }
 
-  // Fallback to local storage
+  // Gather local storage orders across device (NEVER overwrite or discard local device orders)
+  let localPool: Booking[] = [];
+
   // 1. FOR ADMIN: Always load all device orders from global keys & seed data
   if (role === 'admin') {
     const globalOrders = await getStoredList<Booking>(KEYS.ORDERS);
-    if (globalOrders.length > 0) {
-      return globalOrders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    }
     const globalBookings = await getStoredList<Booking>(KEYS.BOOKINGS);
-    if (globalBookings.length > 0) {
-      return globalBookings.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    }
-    return INITIAL_BOOKINGS.map((b) => normalizeOrderDoc(b.id, b));
-  }
-
-  // 2. User-scoped cache check
-  const cachedOrders = await AsyncStorage.getItem(ordersUserKey);
-  if (cachedOrders) {
-    try {
-      const parsed = JSON.parse(cachedOrders) as Booking[];
-      if (parsed.length > 0) return parsed;
-    } catch {
-      // ignore
-    }
-  }
-
-  const cachedBookings = await AsyncStorage.getItem(userKey);
-  if (cachedBookings) {
-    try {
-      const parsed = JSON.parse(cachedBookings) as Booking[];
-      if (parsed.length > 0) return parsed;
-    } catch {
-      // ignore
-    }
-  }
-
-  // 3. If provider, check prov-1 cache, local cache, and global orders, merging with seed
-  if (role === 'provider') {
+    localPool.push(...globalOrders, ...globalBookings);
+    localPool.push(...INITIAL_BOOKINGS.map((b) => normalizeOrderDoc(b.id, b)));
+  } else if (role === 'provider') {
+    // 2. FOR PROVIDER: Merge provider-specific, demo prov-1, and all device-created orders
     const userProvOrders = await getStoredList<Booking>(ordersUserKey);
     const userProvBookings = await getStoredList<Booking>(userKey);
-    let combined = [...userProvOrders, ...userProvBookings];
+    localPool.push(...userProvOrders, ...userProvBookings);
 
     if (userId !== 'prov-1') {
       const p1Orders = await getStoredList<Booking>(getUserStorageKey(KEYS.ORDERS, 'prov-1'));
       const p1Bookings = await getStoredList<Booking>(getUserStorageKey(KEYS.BOOKINGS, 'prov-1'));
-      combined = [...combined, ...p1Orders, ...p1Bookings];
+      localPool.push(...p1Orders, ...p1Bookings);
     }
 
     const allDeviceOrders = await getStoredList<Booking>(KEYS.ORDERS);
     const allDeviceBookings = await getStoredList<Booking>(KEYS.BOOKINGS);
-    const matchedDevice = [...allDeviceOrders, ...allDeviceBookings].filter(
-      (b) => b.providerId === userId || b.providerId === 'prov-1' || userId === 'prov-1'
-    );
-    combined = [...combined, ...matchedDevice];
+    localPool.push(...allDeviceOrders, ...allDeviceBookings);
+
+    // Scan all AsyncStorage keys for any bookings created on this device
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const deviceOrderKeys = allKeys.filter(
+        (k) => (k.startsWith('@fixora_orders') || k.startsWith('@fixora_bookings')) &&
+               k !== ordersUserKey && k !== userKey
+      );
+      for (const k of deviceOrderKeys) {
+        const storedList = await getStoredList<Booking>(k);
+        localPool.push(...storedList);
+      }
+    } catch {
+      // ignore
+    }
 
     const seed = INITIAL_BOOKINGS.filter((b) => b.providerId === 'prov-1' || b.providerId === userId).map((b) =>
       normalizeOrderDoc(b.id, b)
     );
+    localPool.push(...seed);
+  } else {
+    // 3. FOR CUSTOMER: Check customer scoped + all device created orders matching customer
+    const custOrders = await getStoredList<Booking>(ordersUserKey);
+    const custBookings = await getStoredList<Booking>(userKey);
+    localPool.push(...custOrders, ...custBookings);
 
-    const orderMap = new Map<string, Booking>();
-    for (const s of seed) {
-      orderMap.set(s.id, s);
-    }
-    // Overwrite seed items with updated status
-    for (const item of combined) {
-      const existing = orderMap.get(item.id);
-      if (
-        !existing ||
-        new Date(item.updatedAt || item.createdAt).getTime() >=
-          new Date(existing.updatedAt || existing.createdAt).getTime()
-      ) {
-        orderMap.set(item.id, item);
-      }
-    }
-
-    const finalList = Array.from(orderMap.values()).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    const allDeviceOrders = await getStoredList<Booking>(KEYS.ORDERS);
+    const allDeviceBookings = await getStoredList<Booking>(KEYS.BOOKINGS);
+    const matchedCustOrders = [...allDeviceOrders, ...allDeviceBookings].filter(
+      (b) => b.userId === userId || b.customerId === userId
     );
+    localPool.push(...matchedCustOrders);
 
-    await saveStored(ordersUserKey, finalList);
-    await saveStored(userKey, finalList);
-    return finalList;
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const deviceOrderKeys = allKeys.filter(
+        (k) => (k.startsWith('@fixora_orders') || k.startsWith('@fixora_bookings')) &&
+               k !== ordersUserKey && k !== userKey
+      );
+      for (const k of deviceOrderKeys) {
+        const storedList = await getStoredList<Booking>(k);
+        const matches = storedList.filter((b) => b.userId === userId || b.customerId === userId);
+        localPool.push(...matches);
+      }
+    } catch {
+      // ignore
+    }
+
+    if (userId === 'cust-demo') {
+      const seed = INITIAL_BOOKINGS.filter((b) => b.customerId === 'cust-demo').map((b) =>
+        normalizeOrderDoc(b.id, b)
+      );
+      localPool.push(...seed);
+    }
   }
 
-  // 4. FOR CUSTOMER: Check global orders on device matching this customer or created on this device
-  const custOrders = await getStoredList<Booking>(ordersUserKey);
-  const custBookings = await getStoredList<Booking>(userKey);
-  let combinedCust = [...custOrders, ...custBookings];
-
-  const allDeviceOrders = await getStoredList<Booking>(KEYS.ORDERS);
-  const allDeviceBookings = await getStoredList<Booking>(KEYS.BOOKINGS);
-  const matchedCustOrders = [...allDeviceOrders, ...allDeviceBookings].filter(
-    (b) => b.userId === userId || b.customerId === userId
-  );
-  combinedCust = [...combinedCust, ...matchedCustOrders];
-
-  if (userId === 'cust-demo') {
-    const seed = INITIAL_BOOKINGS.filter((b) => b.customerId === 'cust-demo').map((b) =>
-      normalizeOrderDoc(b.id, b)
-    );
-    const orderMap = new Map<string, Booking>();
-    for (const s of seed) {
-      orderMap.set(s.id, s);
-    }
-    for (const item of combinedCust) {
-      const existing = orderMap.get(item.id);
-      if (
-        !existing ||
-        new Date(item.updatedAt || item.createdAt).getTime() >=
-          new Date(existing.updatedAt || existing.createdAt).getTime()
-      ) {
-        orderMap.set(item.id, item);
-      }
-    }
-    const finalList = Array.from(orderMap.values()).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-    await saveStored(userKey, finalList);
-    await saveStored(ordersUserKey, finalList);
-    return finalList;
+  // Unified deduplication map: remote orders + local orders
+  const orderMap = new Map<string, Booking>();
+  for (const r of remoteOrders) {
+    if (r && r.id) orderMap.set(r.id, r);
   }
 
-  if (combinedCust.length > 0) {
-    const orderMap = new Map<string, Booking>();
-    for (const item of combinedCust) {
+  for (const item of localPool) {
+    if (!item || !item.id) continue;
+    const existing = orderMap.get(item.id);
+    if (!existing) {
       orderMap.set(item.id, item);
+    } else {
+      const itemTime = new Date(item.updatedAt || item.createdAt).getTime();
+      const existingTime = new Date(existing.updatedAt || existing.createdAt).getTime();
+      if (itemTime >= existingTime) {
+        orderMap.set(item.id, item);
+      }
     }
-    const finalList = Array.from(orderMap.values()).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-    await saveStored(userKey, finalList);
-    await saveStored(ordersUserKey, finalList);
-    return finalList;
   }
 
-  return [];
+  let finalList = Array.from(orderMap.values());
+
+  if (role === 'provider') {
+    finalList = finalList.filter(
+      (b) =>
+        b.providerId === userId ||
+        b.providerId === 'prov-1' ||
+        !b.providerId ||
+        userId === 'prov-1' ||
+        (b.providerEmail && b.providerEmail.toLowerCase() === (userId || '').toLowerCase())
+    );
+  } else if (role === 'customer') {
+    finalList = finalList.filter(
+      (b) =>
+        b.userId === userId ||
+        b.customerId === userId ||
+        userId === 'cust-demo' ||
+        !b.userId
+    );
+  }
+
+  finalList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  await saveStored(ordersUserKey, finalList);
+  await saveStored(userKey, finalList);
+
+  return finalList;
 }
 
 export const getOrders = getBookings;
@@ -753,63 +810,89 @@ export async function getBookingById(
   userId?: string,
   role?: UserRole
 ): Promise<Booking | undefined> {
+  if (!id) return undefined;
+  const cleanId = id.trim().toLowerCase();
+
+  const matchBooking = (b: any): boolean => {
+    if (!b) return false;
+    const bid = String(b.id || '').trim().toLowerCase();
+    const bOrderId = String(b.orderId || '').trim().toLowerCase();
+    const bBookingId = String(b.bookingId || '').trim().toLowerCase();
+    return bid === cleanId || bOrderId === cleanId || bBookingId === cleanId;
+  };
+
+  // 1. FAST LOCAL-FIRST CHECK: Check all local caches instantly (<2ms)
+  // Check user-scoped orders and bookings
+  if (userId) {
+    const ordersUser = await getStoredList<Booking>(getUserStorageKey(KEYS.ORDERS, userId));
+    const m1 = ordersUser.find(matchBooking);
+    if (m1) return m1;
+
+    const bksUser = await getStoredList<Booking>(getUserStorageKey(KEYS.BOOKINGS, userId));
+    const m2 = bksUser.find(matchBooking);
+    if (m2) return m2;
+  }
+
+  // Check demo provider / prov-1 scoped cache
+  const provOrders = await getStoredList<Booking>(getUserStorageKey(KEYS.ORDERS, 'prov-1'));
+  const mProvOrders = provOrders.find(matchBooking);
+  if (mProvOrders) return mProvOrders;
+
+  const provBookings = await getStoredList<Booking>(getUserStorageKey(KEYS.BOOKINGS, 'prov-1'));
+  const mProvBookings = provBookings.find(matchBooking);
+  if (mProvBookings) return mProvBookings;
+
+  // Check global orders and bookings
+  const globalOrders = await getStoredList<Booking>(KEYS.ORDERS);
+  const mGlobalOrders = globalOrders.find(matchBooking);
+  if (mGlobalOrders) return mGlobalOrders;
+
+  const globalBookings = await getStoredList<Booking>(KEYS.BOOKINGS);
+  const mGlobalBookings = globalBookings.find(matchBooking);
+  if (mGlobalBookings) return mGlobalBookings;
+
+  // Check all AsyncStorage keys on device for this order
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const deviceOrderKeys = allKeys.filter(
+      (k) => k.startsWith('@fixora_orders') || k.startsWith('@fixora_bookings')
+    );
+    for (const key of deviceOrderKeys) {
+      const list = await getStoredList<Booking>(key);
+      const mAny = list.find(matchBooking);
+      if (mAny) return mAny;
+    }
+  } catch {
+    // ignore
+  }
+
+  // Check seed bookings
+  const seedMatch = INITIAL_BOOKINGS.find(matchBooking);
+  if (seedMatch) return normalizeOrderDoc(seedMatch.id, seedMatch);
+
+  // 2. REMOTE FIRESTORE FALLBACK (if not found locally)
   if (isFirebaseConfigured() && db) {
     try {
-      // Check 'orders' collection first
-      const snapOrder = await withTimeout(getDoc(doc(db, 'orders', id)));
+      const snapOrder = await withTimeout(getDoc(doc(db, 'orders', id)), 2000);
       if (snapOrder.exists()) {
-        return normalizeOrderDoc(snapOrder.id, snapOrder.data());
+        const docObj = normalizeOrderDoc(snapOrder.id, snapOrder.data());
+        if (userId) {
+          const userKey = getUserStorageKey(KEYS.ORDERS, userId);
+          const current = await getStoredList<Booking>(userKey);
+          await saveStored(userKey, upsertBookingInList(current, docObj));
+        }
+        return docObj;
       }
 
-      // Check 'bookings' collection
-      const snapBooking = await withTimeout(getDoc(doc(db, 'bookings', id)));
+      const snapBooking = await withTimeout(getDoc(doc(db, 'bookings', id)), 2000);
       if (snapBooking.exists()) {
-        return normalizeOrderDoc(snapBooking.id, snapBooking.data());
+        const docObj = normalizeOrderDoc(snapBooking.id, snapBooking.data());
+        return docObj;
       }
     } catch (e) {
       logFallback('getBookingById', e);
     }
   }
-
-  // Fallback to local storage
-  // 1. Check user-scoped orders and bookings
-  if (userId) {
-    const ordersUserKey = getUserStorageKey(KEYS.ORDERS, userId);
-    const localOrders = await getStoredList<Booking>(ordersUserKey);
-    const match = localOrders.find((b) => b.id === id || b.orderId === id || b.bookingId === id);
-    if (match) return match;
-
-    const userKey = getUserStorageKey(KEYS.BOOKINGS, userId);
-    const localList = await getStoredList<Booking>(userKey);
-    const localMatch = localList.find((b) => b.id === id || b.orderId === id || b.bookingId === id);
-    if (localMatch) return localMatch;
-  }
-
-  // 2. Check global orders and bookings
-  const globalOrders = await getStoredList<Booking>(KEYS.ORDERS);
-  const globalMatch = globalOrders.find((b) => b.id === id || b.orderId === id || b.bookingId === id);
-  if (globalMatch) return globalMatch;
-
-  const globalBookings = await getStoredList<Booking>(KEYS.BOOKINGS);
-  const globalBookingsMatch = globalBookings.find((b) => b.id === id || b.orderId === id || b.bookingId === id);
-  if (globalBookingsMatch) return globalBookingsMatch;
-
-  // 3. If provider or demo provider, check 'prov-1' storage
-  if (role === 'provider' || userId === 'prov-1') {
-    const provOrdersKey = getUserStorageKey(KEYS.ORDERS, 'prov-1');
-    const provOrders = await getStoredList<Booking>(provOrdersKey);
-    const provOrderMatch = provOrders.find((b) => b.id === id || b.orderId === id || b.bookingId === id);
-    if (provOrderMatch) return provOrderMatch;
-
-    const provKey = getUserStorageKey(KEYS.BOOKINGS, 'prov-1');
-    const provList = await getStoredList<Booking>(provKey);
-    const provMatch = provList.find((b) => b.id === id || b.orderId === id || b.bookingId === id);
-    if (provMatch) return provMatch;
-  }
-
-  // 4. Check seed bookings as fallback
-  const seedMatch = INITIAL_BOOKINGS.find((b) => b.id === id || b.orderId === id || b.bookingId === id);
-  if (seedMatch) return normalizeOrderDoc(seedMatch.id, seedMatch);
 
   return undefined;
 }
@@ -841,8 +924,8 @@ export async function createBooking(
     serviceName: bookingData.serviceName || bookingData.serviceTitle || 'Home Service',
     categoryName: bookingData.categoryName,
     serviceImage: bookingData.serviceImage,
-    providerId: bookingData.providerId,
-    providerName: bookingData.providerName,
+    providerId: bookingData.providerId || 'prov-1',
+    providerName: bookingData.providerName || 'David Miller',
     providerAvatar: bookingData.providerAvatar,
     providerPhone: bookingData.providerPhone,
     items: bookingData.items || [
@@ -880,40 +963,59 @@ export async function createBooking(
   const firestoreDb = db;
   if (isFirebaseConfigured() && firestoreDb) {
     try {
-      // 1. Save to central 'orders' collection (primary)
-      await setDoc(doc(firestoreDb, 'orders', newOrder.id), newOrder);
+      // 1. Save to central 'orders' collection (primary) with timeout safety
+      await withTimeout(setDoc(doc(firestoreDb, 'orders', newOrder.id), newOrder), 3000);
       // 2. Mirror to 'bookings' collection for backward compatibility
-      await setDoc(doc(firestoreDb, 'bookings', newOrder.id), newOrder);
+      await withTimeout(setDoc(doc(firestoreDb, 'bookings', newOrder.id), newOrder), 3000);
     } catch (e) {
       logFallback('createOrder / createBooking', e);
     }
   }
 
   // Save to customer's user-scoped storage cache
-  const custKey = getUserStorageKey(KEYS.BOOKINGS, newOrder.customerId);
-  const ordersCustKey = getUserStorageKey(KEYS.ORDERS, newOrder.customerId);
-  const existingCust = await getStoredList<Booking>(custKey);
-  const updatedCust = [newOrder, ...existingCust.filter((b) => b.id !== newOrder.id)];
-  await saveStored(custKey, updatedCust);
-  await saveStored(ordersCustKey, updatedCust);
+  if (newOrder.customerId) {
+    const custKey = getUserStorageKey(KEYS.BOOKINGS, newOrder.customerId);
+    const ordersCustKey = getUserStorageKey(KEYS.ORDERS, newOrder.customerId);
+    const existingCust = await getStoredList<Booking>(custKey);
+    const updatedCust = [newOrder, ...existingCust.filter((b) => b.id !== newOrder.id)];
+    await saveStored(custKey, updatedCust);
+    await saveStored(ordersCustKey, updatedCust);
+  }
 
   // If provider has cache on device, update it too
-  if (newOrder.providerId) {
-    const provKey = getUserStorageKey(KEYS.BOOKINGS, newOrder.providerId);
-    const provOrdersKey = getUserStorageKey(KEYS.ORDERS, newOrder.providerId);
-    const existingProv = await getStoredList<Booking>(provKey);
-    const updatedProv = [newOrder, ...existingProv.filter((b) => b.id !== newOrder.id)];
-    await saveStored(provKey, updatedProv);
-    await saveStored(provOrdersKey, updatedProv);
+  const effectiveProvId = newOrder.providerId || 'prov-1';
+  const provKey = getUserStorageKey(KEYS.BOOKINGS, effectiveProvId);
+  const provOrdersKey = getUserStorageKey(KEYS.ORDERS, effectiveProvId);
+  const existingProv = await getStoredList<Booking>(provKey);
+  const updatedProv = [newOrder, ...existingProv.filter((b) => b.id !== newOrder.id)];
+  await saveStored(provKey, updatedProv);
+  await saveStored(provOrdersKey, updatedProv);
 
-    if (newOrder.providerId !== 'prov-1') {
-      const demoProvKey = getUserStorageKey(KEYS.BOOKINGS, 'prov-1');
-      const demoProvOrdersKey = getUserStorageKey(KEYS.ORDERS, 'prov-1');
-      const existingDemoProv = await getStoredList<Booking>(demoProvKey);
-      const updatedDemoProv = [newOrder, ...existingDemoProv.filter((b) => b.id !== newOrder.id)];
-      await saveStored(demoProvKey, updatedDemoProv);
-      await saveStored(demoProvOrdersKey, updatedDemoProv);
+  if (effectiveProvId !== 'prov-1') {
+    const demoProvKey = getUserStorageKey(KEYS.BOOKINGS, 'prov-1');
+    const demoProvOrdersKey = getUserStorageKey(KEYS.ORDERS, 'prov-1');
+    const existingDemoProv = await getStoredList<Booking>(demoProvKey);
+    const updatedDemoProv = [newOrder, ...existingDemoProv.filter((b) => b.id !== newOrder.id)];
+    await saveStored(demoProvKey, updatedDemoProv);
+    await saveStored(demoProvOrdersKey, updatedDemoProv);
+  }
+
+  // Also check if an active provider is signed in locally on device
+  try {
+    const authUserRaw = await AsyncStorage.getItem('@fixora_auth_user');
+    if (authUserRaw) {
+      const authUser = JSON.parse(authUserRaw);
+      if (authUser?.role === 'provider' && authUser.id && authUser.id !== effectiveProvId && authUser.id !== 'prov-1') {
+        const authProvKey = getUserStorageKey(KEYS.BOOKINGS, authUser.id);
+        const authProvOrdersKey = getUserStorageKey(KEYS.ORDERS, authUser.id);
+        const existingAuthProv = await getStoredList<Booking>(authProvKey);
+        const updatedAuthProv = [newOrder, ...existingAuthProv.filter((b) => b.id !== newOrder.id)];
+        await saveStored(authProvKey, updatedAuthProv);
+        await saveStored(authProvOrdersKey, updatedAuthProv);
+      }
     }
+  } catch {
+    // ignore
   }
 
   // Also save to global cache
@@ -923,26 +1025,47 @@ export async function createBooking(
   await saveStored(KEYS.BOOKINGS, [newOrder, ...globalBookings.filter((b) => b.id !== newOrder.id)]);
 
   // Trigger automated notification to provider
-  if (newOrder.providerId) {
+  const provNotifTitle = 'New Service Request 🔔';
+  const provNotifMsg = `New service request from ${newOrder.customerName} for ${newOrder.serviceTitle} ($${newOrder.totalPrice}) on ${newOrder.date} (${newOrder.timeSlot}).`;
+
+  await addNotification({
+    userId: effectiveProvId,
+    title: provNotifTitle,
+    message: provNotifMsg,
+    type: 'booking',
+    read: false,
+    bookingId: newOrder.id,
+  });
+
+  if (effectiveProvId !== 'prov-1') {
     await addNotification({
-      userId: newOrder.providerId,
-      title: 'New Booking Received 📅',
-      message: `New booking received from ${newOrder.customerName} for ${newOrder.serviceTitle} ($${newOrder.totalPrice}) on ${newOrder.date} (${newOrder.timeSlot}).`,
+      userId: 'prov-1',
+      title: provNotifTitle,
+      message: provNotifMsg,
       type: 'booking',
       read: false,
       bookingId: newOrder.id,
     });
+  }
 
-    if (newOrder.providerId !== 'prov-1') {
-      await addNotification({
-        userId: 'prov-1',
-        title: 'New Booking Received 📅',
-        message: `New booking received from ${newOrder.customerName} for ${newOrder.serviceTitle} ($${newOrder.totalPrice}) on ${newOrder.date} (${newOrder.timeSlot}).`,
-        type: 'booking',
-        read: false,
-        bookingId: newOrder.id,
-      });
+  // Also notify logged in provider on device if any
+  try {
+    const authUserRaw = await AsyncStorage.getItem('@fixora_auth_user');
+    if (authUserRaw) {
+      const authUser = JSON.parse(authUserRaw);
+      if (authUser?.role === 'provider' && authUser.id && authUser.id !== effectiveProvId && authUser.id !== 'prov-1') {
+        await addNotification({
+          userId: authUser.id,
+          title: provNotifTitle,
+          message: provNotifMsg,
+          type: 'booking',
+          read: false,
+          bookingId: newOrder.id,
+        });
+      }
     }
+  } catch {
+    // ignore
   }
 
   // Trigger automated notification to customer
@@ -983,7 +1106,15 @@ export async function updateBookingStatus(
   reason?: string,
   userId?: string,
   role?: UserRole,
-  extraUpdates?: { orderStatus?: string; providerStatus?: string }
+  extraUpdates?: {
+    orderStatus?: string;
+    providerStatus?: string;
+    paymentStatus?: string;
+    paymentMethod?: string;
+    stripePaymentId?: string;
+    stripeChargeId?: string;
+    stripeReceiptUrl?: string;
+  }
 ): Promise<Booking | null> {
   let target: Booking | null = null;
 
@@ -1091,6 +1222,11 @@ export async function updateBookingStatus(
     bookingStatus: orderStatusDisplay,
     orderStatus: orderStatusDisplay,
     providerStatus: providerStatusDisplay,
+    paymentStatus: extraUpdates?.paymentStatus || target.paymentStatus,
+    paymentMethod: extraUpdates?.paymentMethod || target.paymentMethod,
+    stripePaymentId: extraUpdates?.stripePaymentId !== undefined ? extraUpdates.stripePaymentId : target.stripePaymentId,
+    stripeChargeId: extraUpdates?.stripeChargeId !== undefined ? extraUpdates.stripeChargeId : target.stripeChargeId,
+    stripeReceiptUrl: extraUpdates?.stripeReceiptUrl !== undefined ? extraUpdates.stripeReceiptUrl : target.stripeReceiptUrl,
     updatedAt: new Date().toISOString(),
     ...(reason ? { cancellationReason: reason } : {}),
   };
@@ -1098,11 +1234,16 @@ export async function updateBookingStatus(
   if (isFirebaseConfigured() && db) {
     const firestore = db;
     try {
-      const updateData = {
+      const updateData: Record<string, any> = {
         status,
         bookingStatus: orderStatusDisplay,
         orderStatus: orderStatusDisplay,
         providerStatus: providerStatusDisplay,
+        paymentStatus: updatedBooking.paymentStatus,
+        paymentMethod: updatedBooking.paymentMethod,
+        ...(updatedBooking.stripePaymentId ? { stripePaymentId: updatedBooking.stripePaymentId } : {}),
+        ...(updatedBooking.stripeChargeId ? { stripeChargeId: updatedBooking.stripeChargeId } : {}),
+        ...(updatedBooking.stripeReceiptUrl ? { stripeReceiptUrl: updatedBooking.stripeReceiptUrl } : {}),
         updatedAt: updatedBooking.updatedAt,
         ...(reason ? { cancellationReason: reason } : {}),
       };
@@ -1196,6 +1337,30 @@ export async function updateBookingStatus(
     bookingId: target.id,
   });
 
+  // If order was cancelled, notify provider as well
+  if (status === 'cancelled') {
+    const provNotifyId = target.providerId || 'prov-1';
+    const cancelMsg = `${target.customerName || 'Customer'} cancelled the booking for ${target.serviceTitle}.${reason ? ` Reason: ${reason}` : ''}`;
+    await addNotification({
+      userId: provNotifyId,
+      title: 'Booking Cancelled by Customer ❌',
+      message: cancelMsg,
+      type: 'booking',
+      read: false,
+      bookingId: target.id,
+    });
+    if (provNotifyId !== 'prov-1') {
+      await addNotification({
+        userId: 'prov-1',
+        title: 'Booking Cancelled by Customer ❌',
+        message: cancelMsg,
+        type: 'booking',
+        read: false,
+        bookingId: target.id,
+      });
+    }
+  }
+
   return updatedBooking;
 }
 
@@ -1220,6 +1385,51 @@ export async function respondToOrderRequest(
 }
 
 export const updateOrderStatus = updateBookingStatus;
+
+export async function updateBookingPayment(
+  bookingId: string,
+  paymentDetails: {
+    paymentStatus: 'paid';
+    paymentMethod: 'card';
+    stripePaymentId: string;
+    stripeChargeId?: string;
+    stripeReceiptUrl?: string;
+  },
+  userId?: string
+): Promise<Booking | null> {
+  const target = await getBookingById(bookingId, userId);
+  if (!target) return null;
+
+  const updated = await updateBookingStatus(
+    bookingId,
+    target.status,
+    undefined,
+    userId,
+    'customer',
+    {
+      orderStatus: target.orderStatus,
+      providerStatus: target.providerStatus,
+      paymentStatus: 'paid',
+      paymentMethod: 'card',
+      stripePaymentId: paymentDetails.stripePaymentId,
+      stripeChargeId: paymentDetails.stripeChargeId,
+      stripeReceiptUrl: paymentDetails.stripeReceiptUrl,
+    }
+  );
+
+  // Send payment notification to provider
+  const provId = target.providerId || 'prov-1';
+  await addNotification({
+    userId: provId,
+    title: 'Customer Payment Received 💳',
+    message: `Payment of $${target.totalPrice} for ${target.serviceTitle} was successfully completed via Stripe (Tx: ${paymentDetails.stripePaymentId.slice(0, 14)}...).`,
+    type: 'booking',
+    read: false,
+    bookingId: target.id,
+  });
+
+  return updated;
+}
 
 // ======================== REVIEWS ========================
 export async function getReviews(): Promise<Review[]> {
@@ -1289,7 +1499,8 @@ export async function deleteReview(reviewId: string): Promise<void> {
 export function subscribeToChatMessages(
   bookingId: string,
   onUpdate: (messages: ChatMessage[]) => void,
-  onError?: (error: any) => void
+  onError?: (error: any) => void,
+  channelFilter?: string
 ): Unsubscribe {
   if (!isFirebaseConfigured() || !db || !bookingId) {
     return () => {};
@@ -1307,6 +1518,8 @@ export function subscribeToChatMessages(
             bookingId: data.bookingId || bookingId,
             orderId: data.orderId || data.bookingId || bookingId,
             chatId: data.chatId || `chat_${bookingId}`,
+            channel: data.channel || 'customer_provider',
+            recipientRole: data.recipientRole,
             senderId: data.senderId,
             senderName: data.senderName,
             senderRole: data.senderRole,
@@ -1320,8 +1533,12 @@ export function subscribeToChatMessages(
           } as ChatMessage;
         });
 
-        msgs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        onUpdate(msgs);
+        const filtered = channelFilter
+          ? msgs.filter((m) => m.channel === channelFilter)
+          : msgs;
+
+        filtered.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        onUpdate(filtered);
       },
       (error) => {
         console.warn('subscribeToChatMessages notice:', error);
@@ -1336,7 +1553,11 @@ export function subscribeToChatMessages(
   }
 }
 
-export async function getChatMessages(bookingId: string, _userId?: string): Promise<ChatMessage[]> {
+export async function getChatMessages(
+  bookingId: string,
+  _userId?: string,
+  channelFilter?: string
+): Promise<ChatMessage[]> {
   if (isFirebaseConfigured() && db) {
     try {
       const q = query(collection(db, 'chats'), where('bookingId', '==', bookingId));
@@ -1349,6 +1570,8 @@ export async function getChatMessages(bookingId: string, _userId?: string): Prom
             bookingId: data.bookingId || bookingId,
             orderId: data.orderId || data.bookingId || bookingId,
             chatId: data.chatId || `chat_${bookingId}`,
+            channel: data.channel || 'customer_provider',
+            recipientRole: data.recipientRole,
             senderId: data.senderId,
             senderName: data.senderName,
             senderRole: data.senderRole,
@@ -1361,8 +1584,13 @@ export async function getChatMessages(bookingId: string, _userId?: string): Prom
             read: data.read !== undefined ? data.read : data.isRead || false,
           } as ChatMessage;
         });
-        msgs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        return msgs;
+
+        const filtered = channelFilter
+          ? msgs.filter((m) => m.channel === channelFilter)
+          : msgs;
+
+        filtered.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        return filtered;
       }
     } catch (e) {
       logFallback('getChatMessages', e);
@@ -1373,20 +1601,37 @@ export async function getChatMessages(bookingId: string, _userId?: string): Prom
     KEYS.CHATS,
     INITIAL_CHAT_MESSAGES
   );
-  return chatsMap[bookingId] || [];
+  const thread = chatsMap[bookingId] || [];
+  return channelFilter ? thread.filter((m) => m.channel === channelFilter) : thread;
 }
 
 export async function sendChatMessage(
-  messageData: Omit<ChatMessage, 'id' | 'timestamp' | 'isRead'> & { orderId?: string; chatId?: string }
+  messageData: Omit<ChatMessage, 'id' | 'timestamp' | 'isRead'> & {
+    orderId?: string;
+    chatId?: string;
+    channel?: 'customer_provider' | 'admin_customer' | 'admin_provider' | string;
+    recipientRole?: UserRole;
+  }
 ): Promise<ChatMessage> {
   const orderId = messageData.orderId || messageData.bookingId;
   const isoTime = new Date().toISOString();
+  const channel =
+    messageData.channel ||
+    (messageData.senderRole === 'admin'
+      ? messageData.recipientRole === 'provider'
+        ? 'admin_provider'
+        : 'admin_customer'
+      : 'customer_provider');
+  const chatId = messageData.chatId || `chat_${orderId}_${channel}`;
+
   const newMsg: ChatMessage = {
     ...messageData,
     id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     bookingId: orderId,
     orderId,
-    chatId: messageData.chatId || `chat_${orderId}`,
+    chatId,
+    channel,
+    recipientRole: messageData.recipientRole,
     text: messageData.text,
     message: messageData.text,
     timestamp: isoTime,
@@ -1400,11 +1645,13 @@ export async function sendChatMessage(
       await setDoc(doc(db, 'chats', newMsg.id), newMsg);
 
       await setDoc(
-        doc(db, 'support_chats', `chat_${orderId}`),
+        doc(db, 'support_chats', chatId),
         {
-          chatId: `chat_${orderId}`,
+          chatId,
           orderId,
           bookingId: orderId,
+          channel,
+          recipientRole: newMsg.recipientRole,
           customerId:
             messageData.senderRole === 'customer'
               ? messageData.senderId
@@ -1443,69 +1690,87 @@ export async function sendChatMessage(
     bookingId: orderId,
   });
 
+  // Ensure cross-delivery so both demo accounts and signed-in accounts receive notifications
+  if (newMsg.recipientRole === 'provider' && newMsg.recipientId !== 'prov-1') {
+    await addNotification({
+      userId: 'prov-1',
+      title: `Message from ${newMsg.senderName}`,
+      message: newMsg.text,
+      type: 'chat',
+      read: false,
+      bookingId: orderId,
+    });
+  } else if (newMsg.recipientRole === 'customer' && newMsg.recipientId !== 'cust-demo') {
+    await addNotification({
+      userId: 'cust-demo',
+      title: `Message from ${newMsg.senderName}`,
+      message: newMsg.text,
+      type: 'chat',
+      read: false,
+      bookingId: orderId,
+    });
+  }
+
   return newMsg;
 }
 
 // ======================== NOTIFICATIONS ========================
+const READ_NOTIFICATIONS_STORAGE_KEY = '@fixora_read_notifications';
+
+export async function getPersistentReadNotificationIds(): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(READ_NOTIFICATIONS_STORAGE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch {
+    // ignore
+  }
+  return new Set<string>();
+}
+
+export async function addPersistentReadNotificationIds(ids: string[]): Promise<void> {
+  if (!ids || ids.length === 0) return;
+  try {
+    const current = await getPersistentReadNotificationIds();
+    for (const id of ids) {
+      if (id) current.add(id);
+    }
+    await AsyncStorage.setItem(READ_NOTIFICATIONS_STORAGE_KEY, JSON.stringify(Array.from(current)));
+  } catch {
+    // ignore
+  }
+}
+
 export async function getNotifications(userId?: string): Promise<AppNotification[]> {
   if (!userId) return [];
 
   const userKey = getUserStorageKey(KEYS.NOTIFICATIONS, userId);
-  let list: AppNotification[] = [];
+  const readIds = await getPersistentReadNotificationIds();
 
-  if (isFirebaseConfigured() && db) {
-    try {
-      const q = query(collection(db, 'notifications'), where('userId', '==', userId));
-      const snap = await withTimeout(getDocs(q));
-      if (!snap.empty) {
-        list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AppNotification);
-      }
-
-      // Also check prov-1 notifications if this is a provider account or non-cust-demo
-      if (userId !== 'prov-1' && userId !== 'cust-demo') {
-        const qProv = query(collection(db, 'notifications'), where('userId', '==', 'prov-1'));
-        const snapProv = await withTimeout(getDocs(qProv));
-        if (!snapProv.empty) {
-          const provList = snapProv.docs.map((d) => ({ id: d.id, ...d.data() }) as AppNotification);
-          const existingIds = new Set(list.map((n) => n.id));
-          for (const p of provList) {
-            if (!existingIds.has(p.id)) {
-              list.push(p);
-            }
-          }
-        }
-      }
-
-      if (list.length > 0) {
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        await saveStored(userKey, list);
-        return list;
-      }
-    } catch (e) {
-      logFallback('getNotifications', e);
-    }
-  }
-
+  // 1. First retrieve all locally cached notifications for this user
+  let localList: AppNotification[] = [];
   const cached = await AsyncStorage.getItem(userKey);
   if (cached) {
     try {
-      list = JSON.parse(cached) as AppNotification[];
+      localList = JSON.parse(cached) as AppNotification[];
     } catch {
       // ignore
     }
   }
 
-  // Also check prov-1 notifications in local storage
+  // Also check prov-1 notifications in local storage if provider
   if (userId !== 'cust-demo') {
     const provKey = getUserStorageKey(KEYS.NOTIFICATIONS, 'prov-1');
     const provCached = await AsyncStorage.getItem(provKey);
     if (provCached) {
       try {
         const provList = JSON.parse(provCached) as AppNotification[];
-        const existingIds = new Set(list.map((n) => n.id));
+        const existingIds = new Set(localList.map((n) => n.id));
         for (const p of provList) {
           if (!existingIds.has(p.id)) {
-            list.push(p);
+            localList.push(p);
           }
         }
       } catch {
@@ -1514,18 +1779,91 @@ export async function getNotifications(userId?: string): Promise<AppNotification
     }
   }
 
-  if (list.length > 0) {
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return list;
+  // Also check cust-demo chat notifications in local storage if non-demo customer
+  if (userId !== 'cust-demo' && userId !== 'prov-1') {
+    const custKey = getUserStorageKey(KEYS.NOTIFICATIONS, 'cust-demo');
+    const custCached = await AsyncStorage.getItem(custKey);
+    if (custCached) {
+      try {
+        const custList = JSON.parse(custCached) as AppNotification[];
+        const existingIds = new Set(localList.map((n) => n.id));
+        for (const c of custList) {
+          if (!existingIds.has(c.id) && c.type === 'chat') {
+            localList.push(c);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
   }
 
-  if (userId === 'cust-demo') {
-    const seed = INITIAL_NOTIFICATIONS.filter((n) => n.userId === 'cust-demo');
-    await saveStored(userKey, seed);
-    return seed;
+  const notifMap = new Map<string, AppNotification>();
+  for (const item of localList) {
+    notifMap.set(item.id, item);
   }
 
-  return [];
+  // 2. Fetch from Firestore and merge
+  if (isFirebaseConfigured() && db) {
+    try {
+      const q = query(collection(db, 'notifications'), where('userId', '==', userId));
+      const snap = await withTimeout(getDocs(q));
+      if (!snap.empty) {
+        for (const d of snap.docs) {
+          const item = { id: d.id, ...d.data() } as AppNotification;
+          notifMap.set(item.id, item);
+        }
+      }
+
+      // Also check prov-1 notifications if this is a provider account or non-cust-demo
+      if (userId !== 'prov-1' && userId !== 'cust-demo') {
+        const qProv = query(collection(db, 'notifications'), where('userId', '==', 'prov-1'));
+        const snapProv = await withTimeout(getDocs(qProv));
+        if (!snapProv.empty) {
+          for (const d of snapProv.docs) {
+            const item = { id: d.id, ...d.data() } as AppNotification;
+            notifMap.set(item.id, item);
+          }
+        }
+      }
+    } catch (e) {
+      logFallback('getNotifications', e);
+    }
+  }
+
+  // 3. If still empty, check initial seed notifications
+  if (notifMap.size === 0) {
+    if (userId === 'cust-demo') {
+      const seed = INITIAL_NOTIFICATIONS.filter((n) => n.userId === 'cust-demo');
+      for (const s of seed) {
+        notifMap.set(s.id, s);
+      }
+    } else if (userId === 'prov-1' || userId.toLowerCase().includes('prov') || userId.toLowerCase().includes('david')) {
+      // Seed a welcome notification for providers so the panel is never empty
+      const provSeed: AppNotification = {
+        id: 'notif-prov-welcome',
+        userId: userId,
+        title: 'Welcome to Fixora Provider Hub 🛠️',
+        message: 'Manage incoming booking requests, chat with customers, and track your daily earnings here.',
+        type: 'booking',
+        read: false,
+        createdAt: new Date().toISOString(),
+      };
+      notifMap.set(provSeed.id, provSeed);
+    }
+  }
+
+  let merged = Array.from(notifMap.values());
+  if (readIds.size > 0) {
+    merged = merged.map((n) => (readIds.has(n.id) ? { ...n, read: true } : n));
+  }
+  merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  if (merged.length > 0) {
+    await saveStored(userKey, merged);
+  }
+
+  return merged;
 }
 
 export async function addNotification(
@@ -1553,6 +1891,8 @@ export async function addNotification(
 }
 
 export async function markNotificationAsRead(id: string, userId?: string): Promise<void> {
+  await addPersistentReadNotificationIds([id]);
+
   if (isFirebaseConfigured() && db) {
     try {
       await updateDoc(doc(db, 'notifications', id), { read: true });
@@ -1566,6 +1906,16 @@ export async function markNotificationAsRead(id: string, userId?: string): Promi
     const existing = await getStoredList<AppNotification>(userKey);
     const updated = existing.map((n) => (n.id === id ? { ...n, read: true } : n));
     await saveStored(userKey, updated);
+
+    // Also update in prov-1 storage if applicable
+    if (userId !== 'prov-1' && userId !== 'cust-demo') {
+      const provKey = getUserStorageKey(KEYS.NOTIFICATIONS, 'prov-1');
+      const provExisting = await getStoredList<AppNotification>(provKey);
+      if (provExisting.some((n) => n.id === id)) {
+        const provUpdated = provExisting.map((n) => (n.id === id ? { ...n, read: true } : n));
+        await saveStored(provKey, provUpdated);
+      }
+    }
   }
 }
 
@@ -1574,8 +1924,21 @@ export async function markAllNotificationsAsRead(userId?: string): Promise<void>
 
   const userKey = getUserStorageKey(KEYS.NOTIFICATIONS, userId);
   const existing = await getStoredList<AppNotification>(userKey);
+  const allIds = existing.map((n) => n.id);
   const updated = existing.map((n) => ({ ...n, read: true }));
   await saveStored(userKey, updated);
+
+  if (userId !== 'prov-1' && userId !== 'cust-demo') {
+    const provKey = getUserStorageKey(KEYS.NOTIFICATIONS, 'prov-1');
+    const provExisting = await getStoredList<AppNotification>(provKey);
+    for (const p of provExisting) {
+      allIds.push(p.id);
+    }
+    const provUpdated = provExisting.map((n) => ({ ...n, read: true }));
+    await saveStored(provKey, provUpdated);
+  }
+
+  await addPersistentReadNotificationIds(allIds);
 
   if (isFirebaseConfigured() && db) {
     try {
@@ -1584,6 +1947,16 @@ export async function markAllNotificationsAsRead(userId?: string): Promise<void>
       for (const d of snap.docs) {
         if (!d.data().read) {
           await updateDoc(doc(db, 'notifications', d.id), { read: true });
+        }
+      }
+
+      if (userId !== 'prov-1' && userId !== 'cust-demo') {
+        const qProv = query(collection(db, 'notifications'), where('userId', '==', 'prov-1'));
+        const snapProv = await getDocs(qProv);
+        for (const d of snapProv.docs) {
+          if (!d.data().read) {
+            await updateDoc(doc(db, 'notifications', d.id), { read: true });
+          }
         }
       }
     } catch (e) {
@@ -1605,10 +1978,22 @@ export function subscribeToNotifications(
     const q = query(collection(db, 'notifications'), where('userId', '==', userId));
     const unsub = onSnapshot(
       q,
-      (snapshot) => {
-        const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as AppNotification);
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      async (snapshot) => {
+        const readIds = await getPersistentReadNotificationIds();
+        const firestoreList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as AppNotification);
+
         const userKey = getUserStorageKey(KEYS.NOTIFICATIONS, userId);
+        const existingList = await getStoredList<AppNotification>(userKey);
+
+        const notifMap = new Map<string, AppNotification>();
+        for (const n of existingList) notifMap.set(n.id, n);
+        for (const n of firestoreList) notifMap.set(n.id, n);
+
+        let list = Array.from(notifMap.values());
+        if (readIds.size > 0) {
+          list = list.map((n) => (readIds.has(n.id) ? { ...n, read: true } : n));
+        }
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         saveStored(userKey, list);
         onUpdate(list);
       },

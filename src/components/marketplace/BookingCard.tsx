@@ -6,6 +6,7 @@ import { Palette, BorderRadius, Shadows, Spacing } from '../../constants/theme';
 import { Booking } from '../../types';
 import { Badge } from '../common/Badge';
 import { mapStatusToOrderDisplay } from '../../services/marketplaceService';
+import { useMarketplace } from '../../context/MarketplaceContext';
 
 interface BookingCardProps {
   booking: Booking;
@@ -18,6 +19,16 @@ export const BookingCard: React.FC<BookingCardProps> = ({
   onReviewPress,
   onCancelPress,
 }) => {
+  const { notifications } = useMarketplace();
+
+  // Check if there are unread chat messages for this order
+  const unreadChatCount = notifications.filter(
+    (n) =>
+      n.type === 'chat' &&
+      !n.read &&
+      (n.bookingId === booking.id || (booking.orderId && n.bookingId === booking.orderId))
+  ).length;
+
   const handleOpenDetail = () => {
     router.push({
       pathname: '/booking/[id]',
@@ -246,12 +257,24 @@ export const BookingCard: React.FC<BookingCardProps> = ({
       {/* Action Buttons */}
       <View style={styles.actionsRow}>
         <TouchableOpacity
-          style={styles.chatButton}
+          style={[styles.chatButton, unreadChatCount > 0 && styles.chatButtonWithUnread]}
           onPress={handleOpenChat}
           activeOpacity={0.7}
         >
-          <Ionicons name="chatbubble-ellipses-outline" size={16} color={Palette.primary} />
-          <Text style={styles.chatButtonText}>Chat</Text>
+          <Ionicons
+            name={unreadChatCount > 0 ? 'chatbubble-ellipses' : 'chatbubble-ellipses-outline'}
+            size={16}
+            color={unreadChatCount > 0 ? '#FFFFFF' : Palette.primary}
+          />
+          <Text
+            style={[
+              styles.chatButtonText,
+              unreadChatCount > 0 && styles.chatButtonTextWithUnread,
+            ]}
+          >
+            {unreadChatCount > 0 ? `Chat (${unreadChatCount})` : 'Chat'}
+          </Text>
+          {unreadChatCount > 0 && <View style={styles.chatBadgeDot} />}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -526,10 +549,25 @@ const styles = StyleSheet.create({
     borderColor: Palette.primary,
     backgroundColor: Palette.primarySoft,
   },
+  chatButtonWithUnread: {
+    backgroundColor: Palette.primary,
+    borderColor: Palette.primaryDark,
+  },
   chatButtonText: {
     fontSize: 12,
     fontWeight: '600',
     color: Palette.primary,
+  },
+  chatButtonTextWithUnread: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  chatBadgeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#EF4444',
+    marginLeft: 2,
   },
   trackButton: {
     flex: 1,
