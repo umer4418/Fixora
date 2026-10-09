@@ -9,8 +9,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../constants/theme';
+import { useSafeBack } from '../hooks/use-safe-back';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { Address } from '../types';
 import { Button } from '../components/common/Button';
@@ -18,6 +18,7 @@ import { AddressSelectorModal } from '../components/marketplace/AddressSelectorM
 
 export default function AddressesScreen() {
   const { addresses, setDefaultAddress, removeAddress } = useMarketplace();
+  const goBack = useSafeBack();
   const [modalVisible, setModalVisible] = useState(false);
 
   const handleDelete = (addr: Address) => {
@@ -34,7 +35,7 @@ export default function AddressesScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <View style={styles.navBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity onPress={goBack} style={styles.navBtn}>
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <Text style={styles.navTitle}>Saved Addresses</Text>

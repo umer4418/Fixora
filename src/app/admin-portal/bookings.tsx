@@ -10,14 +10,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
+import { useSafeBack } from '../../hooks/use-safe-back';
 import { useMarketplace } from '../../context/MarketplaceContext';
 import { Booking, BookingStatus } from '../../types';
 import { mapStatusToOrderDisplay } from '../../services/marketplaceService';
 
 export default function AdminBookingsScreen() {
   const { bookings, changeBookingStatus, refreshAll } = useMarketplace();
+  const goBack = useSafeBack('/admin-portal');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [refreshing, setRefreshing] = useState(false);
 
@@ -114,7 +115,7 @@ export default function AdminBookingsScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       {/* Top Navigation */}
       <View style={styles.navBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity onPress={goBack} style={styles.navBtn}>
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <View style={styles.navTitleContainer}>

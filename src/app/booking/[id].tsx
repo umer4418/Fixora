@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
+import { useSafeBack } from '../../hooks/use-safe-back';
 import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 import { useMarketplace } from '../../context/MarketplaceContext';
 import { useAuth } from '../../context/AuthContext';
@@ -61,7 +62,9 @@ export default function BookingDetailScreen() {
   const effectiveRole = activeRole || user?.role || 'customer';
   const isProvider = effectiveRole === 'provider';
 
-  const { bookings, changeBookingStatus, respondToOrder, notifications, payBookingWithStripe } = useMarketplace();
+  const { bookings, changeBookingStatus, respondToOrder, notifications, payBookingWithStripe } =
+    useMarketplace();
+  const goBack = useSafeBack('/(tabs)/bookings');
 
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
   const [stripeModalVisible, setStripeModalVisible] = useState(false);
@@ -169,7 +172,7 @@ export default function BookingDetailScreen() {
           <Text style={styles.errorSubtitle}>
             This booking is not available or not associated with your authenticated account.
           </Text>
-          <Button title="Go Back" onPress={() => router.back()} style={{ marginTop: 20 }} />
+          <Button title="Go Back" onPress={goBack} style={{ marginTop: 20 }} />
         </View>
       </SafeAreaView>
     );
@@ -183,8 +186,8 @@ export default function BookingDetailScreen() {
       const paymentIntentId = stripeRes.paymentIntentId || '';
       const ok = await payBookingWithStripe(booking.id, {
         stripePaymentId: paymentIntentId,
-        stripeChargeId: stripeRes.chargeId,
-        stripeReceiptUrl: stripeRes.receiptUrl,
+        ...(stripeRes.chargeId ? { stripeChargeId: stripeRes.chargeId } : {}),
+        ...(stripeRes.receiptUrl ? { stripeReceiptUrl: stripeRes.receiptUrl } : {}),
       });
       if (ok && fetchedBooking) {
         setFetchedBooking({
@@ -192,8 +195,8 @@ export default function BookingDetailScreen() {
           paymentStatus: 'paid',
           paymentMethod: 'card',
           stripePaymentId: stripeRes.paymentIntentId,
-          stripeChargeId: stripeRes.chargeId,
-          stripeReceiptUrl: stripeRes.receiptUrl,
+          ...(stripeRes.chargeId ? { stripeChargeId: stripeRes.chargeId } : {}),
+          ...(stripeRes.receiptUrl ? { stripeReceiptUrl: stripeRes.receiptUrl } : {}),
         });
       }
       const successMsg = `Your payment of $${booking.totalPrice} has been confirmed via Stripe.\n\nTransaction ID: ${stripeRes.paymentIntentId}`;
@@ -314,7 +317,7 @@ export default function BookingDetailScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       {/* Top Header */}
       <View style={styles.navBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity onPress={goBack} style={styles.navBtn}>
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <Text style={styles.navTitle}>Order #{booking.id.slice(-6).toUpperCase()}</Text>

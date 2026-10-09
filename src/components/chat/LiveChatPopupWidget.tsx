@@ -218,9 +218,8 @@ export function LiveChatPopupWidget({
       style={[
         styles.floatingContainer,
         isSmallScreen && styles.floatingContainerMobile,
-        { top: topSafePadding },
+        { top: topSafePadding, pointerEvents: 'box-none' },
       ]}
-      pointerEvents="box-none"
     >
       {/* Pop-up Live Chat Card */}
       {isOpen && (

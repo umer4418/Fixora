@@ -114,6 +114,27 @@ function logFallback(opName: string, err: unknown) {
   }
 }
 
+/** Firestore rejects `undefined` field values. Strip them before setDoc/updateDoc. */
+function omitUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => omitUndefinedDeep(item)) as T;
+  }
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    Object.prototype.toString.call(value) === '[object Object]'
+  ) {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (val !== undefined) {
+        result[key] = omitUndefinedDeep(val);
+      }
+    }
+    return result as T;
+  }
+  return value;
+}
+
 // ======================== CATEGORIES ========================
 export async function getCategories(): Promise<Category[]> {
   const firestoreDb = db;
@@ -964,9 +985,10 @@ export async function createBooking(
   if (isFirebaseConfigured() && firestoreDb) {
     try {
       // 1. Save to central 'orders' collection (primary) with timeout safety
-      await withTimeout(setDoc(doc(firestoreDb, 'orders', newOrder.id), newOrder), 3000);
+      const firestoreOrder = omitUndefinedDeep(newOrder);
+      await withTimeout(setDoc(doc(firestoreDb, 'orders', newOrder.id), firestoreOrder), 3000);
       // 2. Mirror to 'bookings' collection for backward compatibility
-      await withTimeout(setDoc(doc(firestoreDb, 'bookings', newOrder.id), newOrder), 3000);
+      await withTimeout(setDoc(doc(firestoreDb, 'bookings', newOrder.id), firestoreOrder), 3000);
     } catch (e) {
       logFallback('createOrder / createBooking', e);
     }
@@ -1248,14 +1270,17 @@ export async function updateBookingStatus(
         ...(reason ? { cancellationReason: reason } : {}),
       };
 
+      const firestoreUpdate = omitUndefinedDeep(updateData);
+      const firestoreBooking = omitUndefinedDeep(updatedBooking);
+
       // Update in central 'orders' collection
-      await updateDoc(doc(firestore, 'orders', bookingId), updateData).catch(async () => {
-        await setDoc(doc(firestore, 'orders', bookingId), updatedBooking, { merge: true });
+      await updateDoc(doc(firestore, 'orders', bookingId), firestoreUpdate).catch(async () => {
+        await setDoc(doc(firestore, 'orders', bookingId), firestoreBooking, { merge: true });
       });
 
       // Update in 'bookings' collection
-      await updateDoc(doc(firestore, 'bookings', bookingId), updateData).catch(async () => {
-        await setDoc(doc(firestore, 'bookings', bookingId), updatedBooking, { merge: true });
+      await updateDoc(doc(firestore, 'bookings', bookingId), firestoreUpdate).catch(async () => {
+        await setDoc(doc(firestore, 'bookings', bookingId), firestoreBooking, { merge: true });
       });
     } catch (e) {
       logFallback('updateBookingStatus', e);
@@ -1412,8 +1437,10 @@ export async function updateBookingPayment(
       paymentStatus: 'paid',
       paymentMethod: 'card',
       stripePaymentId: paymentDetails.stripePaymentId,
-      stripeChargeId: paymentDetails.stripeChargeId,
-      stripeReceiptUrl: paymentDetails.stripeReceiptUrl,
+      ...(paymentDetails.stripeChargeId ? { stripeChargeId: paymentDetails.stripeChargeId } : {}),
+      ...(paymentDetails.stripeReceiptUrl
+        ? { stripeReceiptUrl: paymentDetails.stripeReceiptUrl }
+        : {}),
     }
   );
 

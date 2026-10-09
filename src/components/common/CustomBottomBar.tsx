@@ -129,18 +129,18 @@ export const CustomBottomBar: React.FC<CustomBottomBarProps> = ({
   };
 
   return (
-    <View style={[styles.container, { height: barHeight }]} pointerEvents="box-none">
+    <View style={[styles.container, { height: barHeight, pointerEvents: 'box-none' }]}>
       <View
         style={{
           width: barWidth,
           height: barHeight,
           alignSelf: 'center',
           position: 'relative',
+          pointerEvents: 'box-none',
         }}
-        pointerEvents="box-none"
       >
         {/* SVG Background with Half-Cut Curved Notch Cutout */}
-        <View style={styles.svgContainer} pointerEvents="none">
+        <View style={[styles.svgContainer, { pointerEvents: 'none' }]}>
           <Svg width={barWidth} height={barHeight}>
             <Path d={pathD} fill="#FFFFFF" />
             <Path d={borderD} fill="none" stroke="#CBD5E1" strokeWidth="1.5" />
@@ -201,7 +201,7 @@ export const CustomBottomBar: React.FC<CustomBottomBarProps> = ({
           </View>
 
           {/* Center Gap for Notch (102px) */}
-          <View style={{ width: notchHalfWidth * 2 + 10 }} pointerEvents="none" />
+          <View style={{ width: notchHalfWidth * 2 + 10, pointerEvents: 'none' }} />
 
           {/* Right Side: Saved and Profile */}
           <View style={[styles.sideGroup, { width: sideWidth }]}>
@@ -232,11 +232,11 @@ const styles = StyleSheet.create({
       android: {
         elevation: 12,
       },
+      web: {
+        boxShadow: '0px -4px 12px rgba(15, 23, 42, 0.1)',
+      },
       default: {
-        shadowColor: '#0F172A',
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
+        boxShadow: '0px -4px 12px rgba(15, 23, 42, 0.1)',
       },
     }),
   },
@@ -317,11 +317,11 @@ const styles = StyleSheet.create({
       android: {
         elevation: 10,
       },
+      web: {
+        boxShadow: '0px 6px 8px rgba(37, 99, 235, 0.45)',
+      },
       default: {
-        shadowColor: Palette.primary,
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.45,
-        shadowRadius: 8,
+        boxShadow: '0px 6px 8px rgba(37, 99, 235, 0.45)',
       },
     }),
   },

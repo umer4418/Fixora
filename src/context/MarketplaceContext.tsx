@@ -432,8 +432,10 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         paymentStatus: 'paid',
         paymentMethod: 'card',
         stripePaymentId: stripeDetails.stripePaymentId,
-        stripeChargeId: stripeDetails.stripeChargeId,
-        stripeReceiptUrl: stripeDetails.stripeReceiptUrl,
+        ...(stripeDetails.stripeChargeId ? { stripeChargeId: stripeDetails.stripeChargeId } : {}),
+        ...(stripeDetails.stripeReceiptUrl
+          ? { stripeReceiptUrl: stripeDetails.stripeReceiptUrl }
+          : {}),
       },
       user?.id
     );

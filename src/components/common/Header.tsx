@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
 import { useMarketplace } from '../../context/MarketplaceContext';
+import { useSafeBack } from '../../hooks/use-safe-back';
 import { Badge } from './Badge';
 
 interface HeaderProps {
@@ -24,13 +25,14 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { activeRole } = useAuth();
   const { unreadNotificationsCount, selectedAddress } = useMarketplace();
+  const goBack = useSafeBack();
 
   return (
     <View style={styles.container}>
       <View style={styles.leftRow}>
         {showBack ? (
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={goBack}
             style={styles.backButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >

@@ -11,13 +11,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
+import { useSafeBack } from '../../hooks/use-safe-back';
 import { useMarketplace } from '../../context/MarketplaceContext';
 import { User } from '../../types';
 
 export default function AdminUsersScreen() {
   const { providers, bookings, verifyProvider } = useMarketplace();
+  const goBack = useSafeBack('/admin-portal');
 
   const [activeTab, setActiveTab] = useState<'providers' | 'customers'>('providers');
   const [search, setSearch] = useState('');

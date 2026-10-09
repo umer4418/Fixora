@@ -11,10 +11,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../constants/theme';
 import { useMarketplace } from '../context/MarketplaceContext';
+import { useSafeBack } from '../hooks/use-safe-back';
 import { AppNotification } from '../types';
 
 export default function NotificationsScreen() {
   const { notifications, markNotificationRead, markAllNotificationsRead } = useMarketplace();
+  const goBack = useSafeBack();
 
   // Automatically mark notifications as read once viewed
   React.useEffect(() => {
@@ -58,7 +60,7 @@ export default function NotificationsScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={styles.navBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity onPress={goBack} style={styles.navBtn}>
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <Text style={styles.navTitle}>Notifications</Text>

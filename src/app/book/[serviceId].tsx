@@ -17,12 +17,14 @@ import { StripePaymentModal } from '../../components/payment/StripePaymentModal'
 import { BorderRadius, Palette, Shadows, Spacing } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
 import { useMarketplace } from '../../context/MarketplaceContext';
+import { useSafeBack } from '../../hooks/use-safe-back';
 import { StripePaymentResult } from '../../services/stripeService';
 
 export default function BookServiceScreen() {
   const { serviceId } = useLocalSearchParams<{ serviceId: string }>();
   const { services, selectedAddress, bookService, coupons, applyCouponCode } = useMarketplace();
   const { user } = useAuth();
+  const goBack = useSafeBack();
 
   const service = useMemo(() => {
     return services.find((s) => s.id === serviceId);
@@ -79,7 +81,7 @@ export default function BookServiceScreen() {
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorTitle}>Service Not Found</Text>
-          <Button title="Go Back" onPress={() => router.back()} style={{ marginTop: 12 }} />
+          <Button title="Go Back" onPress={goBack} style={{ marginTop: 12 }} />
         </View>
       </SafeAreaView>
     );
@@ -184,11 +186,11 @@ export default function BookServiceScreen() {
         notes: notes.trim(),
         paymentStatus: isPaid ? 'paid' : 'unpaid',
         paymentMethod: paymentMethod === 'card' ? 'card' : 'cash',
-        stripePaymentId: stripeRes?.paymentIntentId,
-        stripeChargeId: stripeRes?.chargeId,
-        stripeReceiptUrl: stripeRes?.receiptUrl,
-        couponCode: appliedCoupon?.code,
-        discountAmount: discountAmount > 0 ? discountAmount : undefined,
+        ...(stripeRes?.paymentIntentId ? { stripePaymentId: stripeRes.paymentIntentId } : {}),
+        ...(stripeRes?.chargeId ? { stripeChargeId: stripeRes.chargeId } : {}),
+        ...(stripeRes?.receiptUrl ? { stripeReceiptUrl: stripeRes.receiptUrl } : {}),
+        ...(appliedCoupon?.code ? { couponCode: appliedCoupon.code } : {}),
+        ...(discountAmount > 0 ? { discountAmount } : {}),
       });
 
       // Navigate to booking tracker
@@ -207,7 +209,7 @@ export default function BookServiceScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       {/* Top Header */}
       <View style={styles.navBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity onPress={goBack} style={styles.navBtn}>
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <Text style={styles.navTitle}>Book Service</Text>

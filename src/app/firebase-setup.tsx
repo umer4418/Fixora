@@ -10,8 +10,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../constants/theme';
+import { useSafeBack } from '../hooks/use-safe-back';
 import {
   DEFAULT_FIREBASE_CONFIG,
   getStoredFirebaseConfig,
@@ -27,6 +27,7 @@ export default function FirebaseSetupScreen() {
   const [storageBucket, setStorageBucket] = useState(DEFAULT_FIREBASE_CONFIG.storageBucket);
   const [messagingSenderId, setMessagingSenderId] = useState(DEFAULT_FIREBASE_CONFIG.messagingSenderId);
   const [appId, setAppId] = useState(DEFAULT_FIREBASE_CONFIG.appId);
+  const goBack = useSafeBack();
 
   useEffect(() => {
     async function loadConfig() {
@@ -65,7 +66,7 @@ export default function FirebaseSetupScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <View style={styles.navBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity onPress={goBack} style={styles.navBtn}>
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <Text style={styles.navTitle}>Firebase Project Fixora</Text>

@@ -12,12 +12,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 import { useMarketplace } from '../../context/MarketplaceContext';
+import { useSafeBack } from '../../hooks/use-safe-back';
 import { StarRating } from '../../components/common/StarRating';
 import { Button } from '../../components/common/Button';
 
 export default function ServiceDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { services, providers, reviews, isFavorite, toggleFavorite } = useMarketplace();
+  const goBack = useSafeBack();
 
   const service = useMemo(() => {
     return services.find((s) => s.id === id);
@@ -39,7 +41,7 @@ export default function ServiceDetailScreen() {
         <View style={styles.errorContainer}>
           <Ionicons name="alert-circle-outline" size={48} color={Palette.danger} />
           <Text style={styles.errorTitle}>Service Not Found</Text>
-          <Button title="Go Back" onPress={() => router.back()} style={{ marginTop: 12 }} />
+          <Button title="Go Back" onPress={goBack} style={{ marginTop: 12 }} />
         </View>
       </SafeAreaView>
     );
@@ -68,7 +70,7 @@ export default function ServiceDetailScreen() {
       {/* Top Header Bar */}
       <View style={styles.navBar}>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={goBack}
           style={styles.navBtn}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >

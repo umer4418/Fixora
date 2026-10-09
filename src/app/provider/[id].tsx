@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Palette, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 import { useMarketplace } from '../../context/MarketplaceContext';
+import { useSafeBack } from '../../hooks/use-safe-back';
 import { useAuth } from '../../context/AuthContext';
 import { StarRating } from '../../components/common/StarRating';
 import { ServiceCard } from '../../components/marketplace/ServiceCard';
@@ -25,6 +26,7 @@ export default function ProviderProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { providers, services, reviews, createReview } = useMarketplace();
   const { user } = useAuth();
+  const goBack = useSafeBack();
 
   const [writeReviewVisible, setWriteReviewVisible] = useState(false);
   const [reviewRating, setReviewRating] = useState(5);
@@ -79,7 +81,7 @@ export default function ProviderProfileScreen() {
         <View style={styles.errorContainer}>
           <Ionicons name="alert-circle-outline" size={48} color={Palette.danger} />
           <Text style={styles.errorTitle}>Provider Not Found</Text>
-          <Button title="Go Back" onPress={() => router.back()} style={{ marginTop: 12 }} />
+          <Button title="Go Back" onPress={goBack} style={{ marginTop: 12 }} />
         </View>
       </SafeAreaView>
     );
@@ -91,7 +93,7 @@ export default function ProviderProfileScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       {/* Header bar */}
       <View style={styles.navBar}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity onPress={goBack} style={styles.navBtn}>
           <Ionicons name="arrow-back" size={24} color={Palette.gray800} />
         </TouchableOpacity>
         <Text style={styles.navTitle}>Provider Profile</Text>
