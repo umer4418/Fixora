@@ -1,15 +1,14 @@
-import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { Palette, Spacing, BorderRadius, Shadows } from '../constants/theme';
+import {
+    FlatList,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { BorderRadius, Palette, Shadows, Spacing } from '../constants/theme';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSafeBack } from '../hooks/use-safe-back';
 import { AppNotification } from '../types';
@@ -17,14 +16,6 @@ import { AppNotification } from '../types';
 export default function NotificationsScreen() {
   const { notifications, markNotificationRead, markAllNotificationsRead } = useMarketplace();
   const goBack = useSafeBack();
-
-  // Automatically mark notifications as read once viewed
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      markAllNotificationsRead();
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [markAllNotificationsRead]);
 
   const handleNotificationPress = async (notif: AppNotification) => {
     await markNotificationRead(notif.id);

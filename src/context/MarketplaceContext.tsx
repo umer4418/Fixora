@@ -1,21 +1,21 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  Category,
-  Service,
-  User,
-  Booking,
-  BookingStatus,
-  Review,
-  AppNotification,
-  Address,
-  Coupon,
-} from '../types';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as ServiceAPI from '../services/marketplaceService';
 import {
-  INITIAL_CATEGORIES,
-  INITIAL_SERVICES,
-  INITIAL_PROVIDERS,
+    INITIAL_CATEGORIES,
+    INITIAL_PROVIDERS,
+    INITIAL_SERVICES,
 } from '../services/seedData';
+import {
+    Address,
+    AppNotification,
+    Booking,
+    BookingStatus,
+    Category,
+    Coupon,
+    Review,
+    Service,
+    User,
+} from '../types';
 import { useAuth } from './AuthContext';
 
 interface MarketplaceContextType {
@@ -93,7 +93,7 @@ let lastRefreshTime = 0;
 let lastUserKey = '';
 
 export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, activeRole } = useAuth();
+  const { user, activeRole, isLoading: isAuthLoading } = useAuth();
   const [categories, setCategories] = useState<Category[]>(INITIAL_CATEGORIES);
   const [services, setServices] = useState<Service[]>(INITIAL_SERVICES);
   const [providers, setProviders] = useState<User[]>(INITIAL_PROVIDERS);
@@ -115,6 +115,8 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, []);
 
   const refreshAll = useCallback(async (force = false) => {
+    if (isAuthLoading) return;
+
     const now = Date.now();
 
     // 1. If a refresh is already in-flight, reuse it so we never send redundant parallel bursts
@@ -184,9 +186,11 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
 
     return activeRefreshPromise;
-  }, [user, activeRole, clearUserState]);
+  }, [user, activeRole, isAuthLoading, clearUserState]);
 
   useEffect(() => {
+    if (isAuthLoading) return;
+
     let isMounted = true;
     let unsubOrders: ServiceAPI.Unsubscribe | null = null;
     let unsubNotifs: ServiceAPI.Unsubscribe | null = null;
@@ -312,7 +316,7 @@ export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ c
         window.removeEventListener('storage', storageListener);
       }
     };
-  }, [user, activeRole, clearUserState, refreshAll]);
+  }, [user, activeRole, isAuthLoading, clearUserState, refreshAll]);
 
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
 

@@ -1,16 +1,17 @@
+import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import {
-  View,
+  Platform,
+  StyleSheet,
   Text,
   TouchableOpacity,
-  StyleSheet,
-  Platform,
   useWindowDimensions,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
-import { Ionicons } from '@expo/vector-icons';
 import { Palette } from '../../constants/theme';
+import { useAuth } from '../../context/AuthContext';
 import { useMarketplace } from '../../context/MarketplaceContext';
 
 interface CustomBottomBarProps {
@@ -25,17 +26,27 @@ export const CustomBottomBar: React.FC<CustomBottomBarProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const { user, activeRole } = useAuth();
   const { bookings, notifications } = useMarketplace();
 
   const unreadChatCount = notifications.filter((n) => n.type === 'chat' && !n.read).length;
 
-  const activeBookingsCount = bookings.filter(
-    (b) =>
-      b.status === 'pending' ||
-      b.status === 'accepted' ||
-      b.status === 'in_progress' ||
-      b.status === 'on_the_way'
-  ).length;
+  const activeBookingsCount = bookings.filter((booking) => {
+    if (booking.status === 'completed' || booking.status === 'cancelled') {
+      return false;
+    }
+
+    if (activeRole === 'admin') {
+      return true;
+    }
+
+    if (activeRole === 'provider') {
+      return booking.providerId === user?.id;
+    }
+
+    return booking.userId === user?.id || booking.customerId === user?.id;
+  }).length;
+ 
 
   const routes = state.routes;
   const currentRouteName = routes[state.index]?.name;

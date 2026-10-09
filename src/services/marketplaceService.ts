@@ -1,41 +1,41 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  where,
-  onSnapshot,
-  Unsubscribe,
+    collection,
+    deleteDoc,
+    doc,
+    getDoc,
+    getDocs,
+    onSnapshot,
+    query,
+    setDoc,
+    Unsubscribe,
+    updateDoc,
+    where,
 } from 'firebase/firestore';
+import {
+    Address,
+    AppNotification,
+    Booking,
+    BookingStatus,
+    Category,
+    ChatMessage,
+    Coupon,
+    Review,
+    Service,
+    User,
+    UserRole,
+} from '../types';
 import { db, isFirebaseConfigured } from './firebaseConfig';
 import {
-  Category,
-  Service,
-  User,
-  Booking,
-  BookingStatus,
-  Review,
-  AppNotification,
-  Address,
-  ChatMessage,
-  Coupon,
-  UserRole,
-} from '../types';
-import {
-  INITIAL_CATEGORIES,
-  INITIAL_SERVICES,
-  INITIAL_PROVIDERS,
-  INITIAL_BOOKINGS,
-  INITIAL_REVIEWS,
-  INITIAL_NOTIFICATIONS,
-  INITIAL_ADDRESSES,
-  INITIAL_CHAT_MESSAGES,
-  INITIAL_COUPONS,
+    INITIAL_ADDRESSES,
+    INITIAL_BOOKINGS,
+    INITIAL_CATEGORIES,
+    INITIAL_CHAT_MESSAGES,
+    INITIAL_COUPONS,
+    INITIAL_NOTIFICATIONS,
+    INITIAL_PROVIDERS,
+    INITIAL_REVIEWS,
+    INITIAL_SERVICES,
 } from './seedData';
 
 export type { Unsubscribe };
@@ -1781,47 +1781,9 @@ export async function getNotifications(userId?: string): Promise<AppNotification
   const cached = await AsyncStorage.getItem(userKey);
   if (cached) {
     try {
-      localList = JSON.parse(cached) as AppNotification[];
+      localList = (JSON.parse(cached) as AppNotification[]).filter((n) => n.userId === userId);
     } catch {
       // ignore
-    }
-  }
-
-  // Also check prov-1 notifications in local storage if provider
-  if (userId !== 'cust-demo') {
-    const provKey = getUserStorageKey(KEYS.NOTIFICATIONS, 'prov-1');
-    const provCached = await AsyncStorage.getItem(provKey);
-    if (provCached) {
-      try {
-        const provList = JSON.parse(provCached) as AppNotification[];
-        const existingIds = new Set(localList.map((n) => n.id));
-        for (const p of provList) {
-          if (!existingIds.has(p.id)) {
-            localList.push(p);
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  // Also check cust-demo chat notifications in local storage if non-demo customer
-  if (userId !== 'cust-demo' && userId !== 'prov-1') {
-    const custKey = getUserStorageKey(KEYS.NOTIFICATIONS, 'cust-demo');
-    const custCached = await AsyncStorage.getItem(custKey);
-    if (custCached) {
-      try {
-        const custList = JSON.parse(custCached) as AppNotification[];
-        const existingIds = new Set(localList.map((n) => n.id));
-        for (const c of custList) {
-          if (!existingIds.has(c.id) && c.type === 'chat') {
-            localList.push(c);
-          }
-        }
-      } catch {
-        // ignore
-      }
     }
   }
 
@@ -1842,17 +1804,6 @@ export async function getNotifications(userId?: string): Promise<AppNotification
         }
       }
 
-      // Also check prov-1 notifications if this is a provider account or non-cust-demo
-      if (userId !== 'prov-1' && userId !== 'cust-demo') {
-        const qProv = query(collection(db, 'notifications'), where('userId', '==', 'prov-1'));
-        const snapProv = await withTimeout(getDocs(qProv));
-        if (!snapProv.empty) {
-          for (const d of snapProv.docs) {
-            const item = { id: d.id, ...d.data() } as AppNotification;
-            notifMap.set(item.id, item);
-          }
-        }
-      }
     } catch (e) {
       logFallback('getNotifications', e);
     }
@@ -1886,9 +1837,7 @@ export async function getNotifications(userId?: string): Promise<AppNotification
   }
   merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  if (merged.length > 0) {
-    await saveStored(userKey, merged);
-  }
+  await saveStored(userKey, merged);
 
   return merged;
 }
@@ -1933,16 +1882,6 @@ export async function markNotificationAsRead(id: string, userId?: string): Promi
     const existing = await getStoredList<AppNotification>(userKey);
     const updated = existing.map((n) => (n.id === id ? { ...n, read: true } : n));
     await saveStored(userKey, updated);
-
-    // Also update in prov-1 storage if applicable
-    if (userId !== 'prov-1' && userId !== 'cust-demo') {
-      const provKey = getUserStorageKey(KEYS.NOTIFICATIONS, 'prov-1');
-      const provExisting = await getStoredList<AppNotification>(provKey);
-      if (provExisting.some((n) => n.id === id)) {
-        const provUpdated = provExisting.map((n) => (n.id === id ? { ...n, read: true } : n));
-        await saveStored(provKey, provUpdated);
-      }
-    }
   }
 }
 
@@ -1954,16 +1893,6 @@ export async function markAllNotificationsAsRead(userId?: string): Promise<void>
   const allIds = existing.map((n) => n.id);
   const updated = existing.map((n) => ({ ...n, read: true }));
   await saveStored(userKey, updated);
-
-  if (userId !== 'prov-1' && userId !== 'cust-demo') {
-    const provKey = getUserStorageKey(KEYS.NOTIFICATIONS, 'prov-1');
-    const provExisting = await getStoredList<AppNotification>(provKey);
-    for (const p of provExisting) {
-      allIds.push(p.id);
-    }
-    const provUpdated = provExisting.map((n) => ({ ...n, read: true }));
-    await saveStored(provKey, provUpdated);
-  }
 
   await addPersistentReadNotificationIds(allIds);
 
@@ -1977,15 +1906,6 @@ export async function markAllNotificationsAsRead(userId?: string): Promise<void>
         }
       }
 
-      if (userId !== 'prov-1' && userId !== 'cust-demo') {
-        const qProv = query(collection(db, 'notifications'), where('userId', '==', 'prov-1'));
-        const snapProv = await getDocs(qProv);
-        for (const d of snapProv.docs) {
-          if (!d.data().read) {
-            await updateDoc(doc(db, 'notifications', d.id), { read: true });
-          }
-        }
-      }
     } catch (e) {
       logFallback('markAllNotificationsAsRead', e);
     }
@@ -2010,7 +1930,9 @@ export function subscribeToNotifications(
         const firestoreList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as AppNotification);
 
         const userKey = getUserStorageKey(KEYS.NOTIFICATIONS, userId);
-        const existingList = await getStoredList<AppNotification>(userKey);
+        const existingList = (await getStoredList<AppNotification>(userKey)).filter(
+          (n) => n.userId === userId
+        );
 
         const notifMap = new Map<string, AppNotification>();
         for (const n of existingList) notifMap.set(n.id, n);
